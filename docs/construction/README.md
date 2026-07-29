@@ -10,6 +10,6 @@
 | 1B | [Markdown 解析与 Chunk](phase-01b-markdown-chunking.md) | 已完成 |
 | 1C | [Embedding 与摄取](phase-01c-embedding-ingestion.md) | 已完成 |
 | 1D | [Dense 精确检索与 HNSW](phase-01d-dense-retrieval.md) | 已完成 |
-| 2 | BM25 与 RRF | 待施工 |
+| 2 | [BM25 与 RRF 混合召回](phase-02-bm25-rrf.md) | 已完成 |
 | 3 | Reranker 与接口层 | 待施工 |
 | 4 | 语料、评测与验收 | 待施工 |
