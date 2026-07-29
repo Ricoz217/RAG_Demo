@@ -9,7 +9,7 @@
 | 1A | [数据库基础](phase-01a-database-foundation.md) | 已完成 |
 | 1B | [Markdown 解析与 Chunk](phase-01b-markdown-chunking.md) | 已完成 |
 | 1C | [Embedding 与摄取](phase-01c-embedding-ingestion.md) | 已完成 |
-| 1D | Dense 检索 | 待施工 |
+| 1D | [Dense 精确检索与 HNSW](phase-01d-dense-retrieval.md) | 已完成 |
 | 2 | BM25 与 RRF | 待施工 |
 | 3 | Reranker 与接口层 | 待施工 |
 | 4 | 语料、评测与验收 | 待施工 |
