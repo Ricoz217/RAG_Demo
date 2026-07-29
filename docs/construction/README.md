@@ -8,7 +8,7 @@
 | 0 | [工程基线](phase-00-engineering-baseline.md) | 已完成 |
 | 1A | [数据库基础](phase-01a-database-foundation.md) | 已完成 |
 | 1B | [Markdown 解析与 Chunk](phase-01b-markdown-chunking.md) | 已完成 |
-| 1C | Embedding 与摄取 | 待施工 |
+| 1C | [Embedding 与摄取](phase-01c-embedding-ingestion.md) | 已完成 |
 | 1D | Dense 检索 | 待施工 |
 | 2 | BM25 与 RRF | 待施工 |
 | 3 | Reranker 与接口层 | 待施工 |

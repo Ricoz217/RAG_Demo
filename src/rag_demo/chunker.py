@@ -46,6 +46,10 @@ class MarkdownChunker:
         self._overlap_chars = overlap_chars
         self._version = version
 
+    @property
+    def version(self) -> str:
+        return self._version
+
     def chunk(self, document: ParsedMarkdownDocument) -> tuple[Chunk, ...]:
         """Create globally indexed chunks for a parsed document."""
         raw_chunks: list[tuple[tuple[str, ...], str]] = []
@@ -127,7 +131,7 @@ class MarkdownChunker:
             content_raw=content_raw,
             retrieval_text=retrieval_text,
             char_count=len(content_raw),
-            content_hash=hashlib.sha256(content_raw.encode("utf-8")).hexdigest(),
+            content_hash=hashlib.sha256(retrieval_text.encode("utf-8")).hexdigest(),
         )
 
 

@@ -113,6 +113,19 @@ def test_chunk_content_hash_is_stable_for_equivalent_line_endings() -> None:
     assert windows == unix
 
 
+def test_chunk_hash_changes_when_retrieval_heading_changes() -> None:
+    chunker = MarkdownChunker(target_chars=100, max_chars=150, overlap_chars=20)
+    first = chunker.chunk(
+        parse_markdown("# 标题\n\n## 第一节\n\n相同正文", source_path=Path("same.md"))
+    )
+    second = chunker.chunk(
+        parse_markdown("# 标题\n\n## 第二节\n\n相同正文", source_path=Path("same.md"))
+    )
+
+    assert first[0].content_raw == second[0].content_raw
+    assert first[0].content_hash != second[0].content_hash
+
+
 @pytest.mark.parametrize(
     ("target_chars", "max_chars", "overlap_chars", "message"),
     [
