@@ -1,5 +1,6 @@
 """Application configuration loaded from environment variables."""
 
+from pathlib import Path
 from typing import Self
 
 from pydantic import (
@@ -49,6 +50,7 @@ class Settings(BaseSettings):
     rerank_top_k: int = Field(default=20, gt=0)
     final_top_k: int = Field(default=5, gt=0)
     hnsw_ef_search: int = Field(default=100, gt=0)
+    bm25_index_path: Path = Path("data/indexes/bm25")
 
     @field_validator("database_url")
     @classmethod

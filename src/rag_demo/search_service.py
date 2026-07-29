@@ -163,6 +163,7 @@ class SearchResponse:
     query: str
     results: tuple[SearchCandidate, ...]
     reranked: tuple[SearchCandidate, ...]
+    fused_candidates: tuple[SearchCandidate, ...]
     recall: HybridRecallResponse
     timings: SearchTimings
     counts: SearchCandidateCounts
@@ -310,6 +311,7 @@ class HybridSearchService:
             query=request.query,
             results=results,
             reranked=reranked,
+            fused_candidates=candidates,
             recall=recall,
             timings=SearchTimings(
                 query_embedding_ms=recall.dense.query_embedding_ms,
