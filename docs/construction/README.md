@@ -6,7 +6,7 @@
 | 阶段 | 记录 | 状态 |
 |---|---|---|
 | 0 | [工程基线](phase-00-engineering-baseline.md) | 已完成 |
-| 1A | 数据库基础 | 待施工 |
+| 1A | [数据库基础](phase-01a-database-foundation.md) | 已完成 |
 | 1B | Markdown 解析与 Chunk | 待施工 |
 | 1C | Embedding 与摄取 | 待施工 |
 | 1D | Dense 检索 | 待施工 |

@@ -28,6 +28,17 @@ Copy-Item .env.example .env
 .\.venv\Scripts\python.exe -m rag_demo --help
 ```
 
+## 数据库
+
+PostgreSQL 连接和 pgvector 扩展准备好后执行：
+
+```powershell
+.\.venv\Scripts\python.exe -m rag_demo db init
+.\.venv\Scripts\python.exe -m rag_demo db status
+```
+
+`db init` 使用 checksum migration history 和 PostgreSQL advisory lock，可以安全重复执行。
+`db status` 显示应用账号、数据库版本、pgvector 版本、向量列维度、HNSW 状态和语料行数。
+
 依赖的精确版本保存在 `uv.lock`。施工过程和各阶段验收证据保存在
 `docs/construction/`。
-

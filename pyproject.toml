@@ -44,6 +44,9 @@ where = ["src"]
 addopts = "-ra --strict-config --strict-markers --cov=rag_demo --cov-report=term-missing"
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+    "integration: requires the configured local infrastructure",
+]
 
 [tool.ruff]
 target-version = "py312"
