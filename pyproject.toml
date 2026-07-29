@@ -8,13 +8,40 @@ version = "0.1.0"
 description = "A minimal, observable Hybrid RAG retrieval demo."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
-dependencies = []
+dependencies = [
+    "bm25s",
+    "fastapi",
+    "httpx",
+    "jieba",
+    "markdown-it-py",
+    "numpy",
+    "pgvector",
+    "psycopg[binary]",
+    "psycopg-pool",
+    "pydantic",
+    "pydantic-settings",
+    "rich",
+    "typer",
+    "uvicorn",
+]
+
+[project.scripts]
+rag-demo = "rag_demo.cli:app"
+
+[dependency-groups]
+dev = [
+    "mypy",
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",
+    "ruff",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.pytest.ini_options]
-addopts = "-ra"
+addopts = "-ra --strict-config --strict-markers --cov=rag_demo --cov-report=term-missing"
 testpaths = ["tests"]
 pythonpath = ["src"]
 
@@ -23,8 +50,25 @@ target-version = "py312"
 line-length = 100
 src = ["src", "tests"]
 
+[tool.ruff.lint]
+select = ["ASYNC", "B", "E", "F", "I", "UP"]
+
 [tool.mypy]
 python_version = "3.12"
 strict = true
 files = ["src", "tests"]
+plugins = ["pydantic.mypy"]
 
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
+
+[tool.coverage.run]
+branch = true
+source = ["rag_demo"]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
+skip_covered = true
