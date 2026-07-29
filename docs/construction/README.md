@@ -11,5 +11,7 @@
 | 1C | [Embedding 与摄取](phase-01c-embedding-ingestion.md) | 已完成 |
 | 1D | [Dense 精确检索与 HNSW](phase-01d-dense-retrieval.md) | 已完成 |
 | 2 | [BM25 与 RRF 混合召回](phase-02-bm25-rrf.md) | 已完成 |
-| 3 | Reranker 与接口层 | 待施工 |
+| 3A | [Reranker 与最终搜索服务](phase-03a-reranker-search-service.md) | 已完成 |
+| 3B | 应用生命周期与 Typer CLI | 待施工 |
+| 3C | FastAPI REST 与接口一致性 | 待施工 |
 | 4 | 语料、评测与验收 | 待施工 |
