@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Self
 
 import httpx
+from psycopg.types.json import Jsonb
 
 from rag_demo.bm25_retriever import (
     BM25BuildResult,
@@ -20,7 +23,11 @@ from rag_demo.config import Settings
 from rag_demo.db import Database
 from rag_demo.dense_retriever import DenseQueryService, DenseRetriever
 from rag_demo.embedding_client import EmbeddingClient
-from rag_demo.ingest_service import DocumentIngestor
+from rag_demo.ingest_service import (
+    DocumentIngestor,
+    IdempotencyConflictError,
+    IdempotencyInProgressError,
+)
 from rag_demo.reranker_client import RerankerClient
 from rag_demo.search_service import (
     HybridRecallService,
@@ -158,6 +165,14 @@ class RAGApplication:
     def bm25_manager(self) -> BM25IndexManager:
         return self._required(self._bm25_manager)
 
+    @property
+    def bm25_retriever(self) -> BM25Retriever | None:
+        return self._bm25_retriever
+
+    @property
+    def bm25_ready(self) -> bool:
+        return self._bm25_retriever is not None and self._search_service is not None
+
     def create_ingestor(
         self,
         *,
@@ -182,6 +197,38 @@ class RAGApplication:
         result = await self.bm25_manager.rebuild()
         await self.load_bm25()
         return result
+
+    async def rebuild_bm25_idempotent(
+        self,
+        *,
+        idempotency_key: str,
+    ) -> BM25BuildResult:
+        """Persist REST rebuild idempotency while publishing atomically."""
+        request_hash = self._bm25_request_hash()
+        stored_key = f"bm25-rebuild:{idempotency_key}"
+        cached = await self._claim_bm25_rebuild(
+            stored_key=stored_key,
+            request_hash=request_hash,
+            external_key=idempotency_key,
+        )
+        if cached is not None:
+            await self.load_bm25()
+            return cached
+
+        try:
+            result = await self.rebuild_bm25()
+            await self._complete_bm25_rebuild(
+                stored_key=stored_key,
+                request_hash=request_hash,
+                result=result,
+            )
+            return result
+        except Exception:
+            await self._fail_bm25_rebuild(
+                stored_key=stored_key,
+                request_hash=request_hash,
+            )
+            raise
 
     async def load_bm25(self) -> BM25Retriever:
         """Load CURRENT and refresh the final search service."""
@@ -306,6 +353,124 @@ class RAGApplication:
             )
         except Exception as exc:
             return _failed_check("Corpus vector space", exc)
+
+    def _bm25_request_hash(self) -> str:
+        canonical = json.dumps(
+            {
+                "operation": "bm25-rebuild",
+                "embedding_model": self.settings.embedding_model,
+                "embedding_dimensions": self.settings.embedding_dimensions,
+                "index_root": self.settings.bm25_index_path.resolve().as_posix(),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    async def _claim_bm25_rebuild(
+        self,
+        *,
+        stored_key: str,
+        request_hash: str,
+        external_key: str,
+    ) -> BM25BuildResult | None:
+        if not external_key.strip():
+            raise ValueError("idempotency_key must not be empty")
+        async with self.database.connection() as connection:
+            async with connection.transaction():
+                inserted = await connection.execute(
+                    """
+                    INSERT INTO ingestion_requests (
+                        idempotency_key,
+                        request_hash,
+                        status
+                    )
+                    VALUES (%s, %s, 'processing')
+                    ON CONFLICT (idempotency_key) DO NOTHING
+                    RETURNING idempotency_key
+                    """,
+                    (stored_key, request_hash),
+                )
+                if await inserted.fetchone() is not None:
+                    return None
+
+                cursor = await connection.execute(
+                    """
+                    SELECT request_hash, status, result
+                    FROM ingestion_requests
+                    WHERE idempotency_key = %s
+                    FOR UPDATE
+                    """,
+                    (stored_key,),
+                )
+                existing = await cursor.fetchone()
+                if existing is None:
+                    raise RuntimeError("BM25 idempotency row disappeared during claim")
+                if existing["request_hash"] != request_hash:
+                    raise IdempotencyConflictError(
+                        "idempotency key was already used for a different BM25 rebuild"
+                    )
+                if existing["status"] == "completed":
+                    return BM25BuildResult.from_json(existing["result"])
+                if existing["status"] == "processing":
+                    raise IdempotencyInProgressError(
+                        "idempotent BM25 rebuild is already processing"
+                    )
+                if existing["status"] != "failed":
+                    raise RuntimeError(f"unknown BM25 rebuild status: {existing['status']}")
+                await connection.execute(
+                    """
+                    UPDATE ingestion_requests
+                    SET status = 'processing',
+                        result = NULL,
+                        updated_at = now()
+                    WHERE idempotency_key = %s
+                    """,
+                    (stored_key,),
+                )
+                return None
+
+    async def _complete_bm25_rebuild(
+        self,
+        *,
+        stored_key: str,
+        request_hash: str,
+        result: BM25BuildResult,
+    ) -> None:
+        async with self.database.connection() as connection:
+            cursor = await connection.execute(
+                """
+                UPDATE ingestion_requests
+                SET status = 'completed',
+                    result = %s,
+                    updated_at = now()
+                WHERE idempotency_key = %s
+                  AND request_hash = %s
+                  AND status = 'processing'
+                """,
+                (Jsonb(result.to_json()), stored_key, request_hash),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError("BM25 idempotency completion did not update one row")
+
+    async def _fail_bm25_rebuild(
+        self,
+        *,
+        stored_key: str,
+        request_hash: str,
+    ) -> None:
+        async with self.database.connection() as connection:
+            await connection.execute(
+                """
+                UPDATE ingestion_requests
+                SET status = 'failed',
+                    updated_at = now()
+                WHERE idempotency_key = %s
+                  AND request_hash = %s
+                  AND status = 'processing'
+                """,
+                (stored_key, request_hash),
+            )
 
     @staticmethod
     def _required[ResourceT](resource: ResourceT | None) -> ResourceT:

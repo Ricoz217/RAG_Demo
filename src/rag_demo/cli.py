@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
+import uvicorn
 from rich.console import Console
 from rich.table import Table
 
@@ -352,6 +353,26 @@ def compare(
         score_getter=lambda item: item.rerank_score,
     )
     _print_timings(response)
+
+
+@app.command("serve")
+def serve(
+    host: Annotated[
+        str,
+        typer.Option(help="Bind address; keep 127.0.0.1 for the local demo."),
+    ] = "127.0.0.1",
+    port: Annotated[
+        int,
+        typer.Option(min=1, max=65535, help="HTTP listen port."),
+    ] = 8000,
+) -> None:
+    """Start the FastAPI REST server."""
+    uvicorn.run(
+        "rag_demo.api:create_app",
+        factory=True,
+        host=host,
+        port=port,
+    )
 
 
 def _print_search_response(response: SearchResponse, *, debug: bool) -> None:

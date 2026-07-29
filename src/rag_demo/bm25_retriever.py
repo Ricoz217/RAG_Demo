@@ -11,7 +11,7 @@ import shutil
 import time
 import uuid
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
@@ -52,6 +52,22 @@ class BM25BuildResult:
     generation: str
     chunk_count: int
     build_ms: float
+
+    def to_json(self) -> dict[str, str | int | float]:
+        return asdict(self)
+
+    @classmethod
+    def from_json(cls, value: Any) -> BM25BuildResult:
+        if not isinstance(value, dict):
+            raise BM25IndexError("stored BM25 rebuild result is not an object")
+        try:
+            return cls(
+                generation=str(value["generation"]),
+                chunk_count=int(value["chunk_count"]),
+                build_ms=float(value["build_ms"]),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise BM25IndexError("stored BM25 rebuild result is invalid") from exc
 
 
 @dataclass(frozen=True, slots=True)

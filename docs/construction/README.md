@@ -13,5 +13,5 @@
 | 2 | [BM25 与 RRF 混合召回](phase-02-bm25-rrf.md) | 已完成 |
 | 3A | [Reranker 与最终搜索服务](phase-03a-reranker-search-service.md) | 已完成 |
 | 3B | [应用生命周期与 Typer CLI](phase-03b-application-cli.md) | 已完成 |
-| 3C | FastAPI REST 与接口一致性 | 待施工 |
+| 3C | [FastAPI REST 与接口一致性](phase-03c-fastapi-rest.md) | 已完成 |
 | 4 | 语料、评测与验收 | 待施工 |
