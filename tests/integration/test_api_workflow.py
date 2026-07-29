@@ -45,6 +45,13 @@ async def _cleanup() -> None:
             )
 
 
+async def _database_counts() -> tuple[int, int]:
+    settings = Settings()
+    async with Database(settings.database_url.get_secret_value()) as database:
+        status = await database.status()
+        return status.document_count, status.chunk_count
+
+
 @pytest.mark.asyncio
 async def test_rest_workflow_and_cli_return_the_same_final_chunk_order(
     tmp_path: Path,
@@ -69,6 +76,7 @@ OAuth2PasswordBearer 从请求头读取 Bearer Token。
     monkeypatch.setenv("BM25_INDEX_PATH", str(tmp_path / "bm25-index"))
     settings = Settings()
     await _cleanup()
+    baseline_documents, baseline_chunks = await _database_counts()
 
     ingest_body = {
         "source": str(source),
@@ -138,9 +146,9 @@ OAuth2PasswordBearer 从请求头读取 Bearer Token。
 
             stats = await client.get("/v1/stats")
             assert stats.status_code == 200
-            assert stats.json()["document_count"] == 1
-            assert stats.json()["chunk_count"] == 2
-            assert stats.json()["bm25"]["chunk_count"] == 2
+            assert stats.json()["document_count"] == baseline_documents + 1
+            assert stats.json()["chunk_count"] == baseline_chunks + 2
+            assert stats.json()["bm25"]["chunk_count"] == baseline_chunks + 2
 
             query = "OAuth2PasswordBearer 有什么作用？"
             search_body = {

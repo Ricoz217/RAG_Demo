@@ -14,7 +14,7 @@
 - 默认仓库为 FastAPI 官方 GitHub 仓库；
 - `git clone --depth 1` 浅克隆；
 - `--filter=blob:none` 延迟获取无关 blob；
-- sparse checkout 只选择中文文档、英文文档和 LICENSE；
+- sparse checkout 只选择中文和英文文档；
 - 读取 origin URL；
 - 读取当前 commit SHA；
 - 统计中英文 Markdown 文件数；

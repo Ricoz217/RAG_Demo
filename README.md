@@ -1,13 +1,44 @@
 # Minimal Hybrid RAG Demo
 
-一个面向检索链路演示的最小 Hybrid RAG 项目。
+一个可在 Windows 本机完整运行、可观察每个排名阶段的最小 Hybrid RAG 检索 Demo。
 
-项目采用 Python 3.12 和 `src` 布局，只覆盖文档摄取、Dense/BM25 检索、RRF
-融合和 Cross-Encoder Rerank，不生成最终自然语言答案。
+本项目只实现检索链路，不接 Agent，不调用生成式 LLM，也不生成自然语言答案：
 
-## 开发环境
+```text
+FastAPI Markdown
+→ 结构化 Chunk
+→ llama.cpp bge-m3 Embedding
+→ PostgreSQL + pgvector
+   ├─ Dense exact / HNSW
+   └─ bm25s + jieba
+→ RRF
+→ llama.cpp bge-reranker-v2-m3
+→ 带来源与全阶段分数的 Final Top-K
+```
 
-在 PowerShell 中执行：
+CLI、FastAPI REST 和可直接 `await` 的 Python Service 使用同一套核心对象。
+
+## 已验证环境
+
+最后验收日期：2026-07-29。
+
+| 组件 | 已验证版本/配置 |
+|---|---|
+| Windows | Windows 11 x64 |
+| Python | 3.12.9 |
+| PostgreSQL | 18.4 |
+| pgvector | 0.8.5 |
+| 向量列 | `vector(1024)` |
+| ANN | HNSW + cosine |
+| Embedding | llama.cpp / bge-m3 |
+| Reranker | llama.cpp / bge-reranker-v2-m3 |
+| GPU | NVIDIA GeForce RTX 4090 |
+
+依赖的精确版本保存在 `uv.lock`。
+
+## 1. 创建项目环境
+
+必须使用独立 Python 3.12 环境，不要复用系统中其他项目的 Python：
 
 ```powershell
 py -3.12 -m venv .venv
@@ -16,29 +47,305 @@ py -3.12 -m venv .venv
 Copy-Item .env.example .env
 ```
 
-然后根据本机 PostgreSQL、Embedding 和 Reranker 服务修改 `.env`。真实 `.env`
-包含密钥且已被 Git 忽略。
+真实 `.env` 已被 Git 忽略。不要把数据库密码或模型 API Key 写入代码、README 或 commit。
 
-## 工程检查
+## 2. 准备 PostgreSQL + pgvector
 
-```powershell
-.\.venv\Scripts\python.exe -m pytest
-.\.venv\Scripts\ruff.exe check src tests
-.\.venv\Scripts\mypy.exe src tests
-.\.venv\Scripts\python.exe -m rag_demo --help
+以下 SQL 中的密码只是占位符，请替换：
+
+```sql
+CREATE ROLE rag_app WITH LOGIN PASSWORD 'replace-with-a-strong-password';
+CREATE DATABASE rag_demo OWNER rag_app ENCODING 'UTF8';
+\c rag_demo
+CREATE EXTENSION vector;
 ```
 
-## 数据库
+在 `.env` 设置：
 
-PostgreSQL 连接和 pgvector 扩展准备好后执行：
+```dotenv
+DATABASE_URL=postgresql://rag_app:replace-with-your-database-password@127.0.0.1:5432/rag_demo
+```
+
+应用账号不需要超级用户权限；`vector` 扩展由管理员预先创建。
+
+初始化并检查 Schema：
 
 ```powershell
 .\.venv\Scripts\python.exe -m rag_demo db init
 .\.venv\Scripts\python.exe -m rag_demo db status
 ```
 
-`db init` 使用 checksum migration history 和 PostgreSQL advisory lock，可以安全重复执行。
-`db status` 显示应用账号、数据库版本、pgvector 版本、向量列维度、HNSW 状态和语料行数。
+Migration 使用 SHA-256 checksum、数据库 advisory lock 和事务，可安全重复执行。已经应用的
+SQL migration 不应修改。
 
-依赖的精确版本保存在 `uv.lock`。施工过程和各阶段验收证据保存在
-`docs/construction/`。
+## 3. 启动 llama.cpp 模型服务
+
+模型服务由项目外的 llama.cpp 独立运行。本应用不安装 PyTorch、Transformers 或模型权重。
+
+Embedding 服务需要兼容：
+
+```text
+POST http://127.0.0.1:8081/v1/embeddings
+model: bge-m3
+dimensions: 1024
+```
+
+Reranker 服务需要兼容：
+
+```text
+POST http://127.0.0.1:8082/reranking
+model: bge-reranker-v2-m3
+```
+
+在 `.env` 设置实际 URL、Key、模型名、超时和批量大小。示例见 `.env.example`。
+
+`EMBEDDING_MODEL` 或维度变化后必须重新生成所有 Chunk 向量；同维度的不同模型也不能混用。
+非 1024 维模型还需要重建向量列和 HNSW 索引。
+
+## 4. 下载、摄取并建立 BM25
+
+浅克隆 FastAPI 官方中英文文档：
+
+```powershell
+.\.venv\Scripts\python.exe -m rag_demo corpus download-fastapi
+```
+
+摄取中文文档：
+
+```powershell
+.\.venv\Scripts\python.exe -m rag_demo corpus ingest-fastapi --language zh
+```
+
+命令自动记录 Git origin、commit SHA 和仓库相对路径，并为当前 revision/配置生成稳定
+Idempotency Key。
+
+建立 BM25 派生索引：
+
+```powershell
+.\.venv\Scripts\python.exe -m rag_demo bm25 rebuild
+```
+
+BM25 索引位于 `data/indexes/bm25/`，使用 immutable generation 和原子 `CURRENT` 指针。
+它可以随时从 PostgreSQL Chunk 全量重建，不是第二份事实源。
+
+最后运行：
+
+```powershell
+.\.venv\Scripts\python.exe -m rag_demo doctor
+```
+
+Doctor 会真实调用两个模型，而不只是检查端口。
+
+## 5. 搜索与对照演示
+
+普通搜索：
+
+```powershell
+.\.venv\Scripts\python.exe -m rag_demo search `
+  "FastAPI 的依赖项在同一次请求里会不会被反复执行？"
+```
+
+显示 Dense、BM25、RRF、Reranker 全部中间排名：
+
+```powershell
+.\.venv\Scripts\python.exe -m rag_demo search `
+  "FastAPI 的依赖项在同一次请求里会不会被反复执行？" `
+  --debug
+```
+
+关闭 Reranker：
+
+```powershell
+.\.venv\Scripts\python.exe -m rag_demo search `
+  "怎样让接口接收一个 JSON 对象？" `
+  --no-rerank
+```
+
+切换为 exact 向量扫描：
+
+```powershell
+.\.venv\Scripts\python.exe -m rag_demo search `
+  "怎样让接口接收一个 JSON 对象？" `
+  --dense-mode exact
+```
+
+一次展示四组结果：
+
+```powershell
+.\.venv\Scripts\python.exe -m rag_demo compare `
+  "OAuth2PasswordBearer 有什么作用？"
+```
+
+输出小型五路评测：
+
+```powershell
+.\.venv\Scripts\python.exe -m rag_demo benchmark
+.\.venv\Scripts\python.exe -m rag_demo benchmark --debug
+```
+
+## 6. FastAPI REST
+
+启动：
+
+```powershell
+.\.venv\Scripts\python.exe -m rag_demo serve `
+  --host 127.0.0.1 `
+  --port 8000
+```
+
+端点：
+
+```text
+GET  /health/live
+GET  /health/ready
+GET  /v1/stats
+POST /v1/search
+POST /v1/ingest
+POST /v1/bm25/rebuild
+```
+
+PowerShell 搜索示例：
+
+```powershell
+$body = @{
+  query = "怎样让接口接收一个 JSON 对象？"
+  dense_top_k = 30
+  bm25_top_k = 30
+  rerank_top_k = 20
+  final_top_k = 5
+  debug = $true
+} | ConvertTo-Json
+
+Invoke-RestMethod `
+  -Uri "http://127.0.0.1:8000/v1/search" `
+  -Method Post `
+  -ContentType "application/json" `
+  -Body $body
+```
+
+摄取和 BM25 rebuild 必须携带：
+
+```http
+Idempotency-Key: caller-generated-stable-key
+```
+
+相同 Key + 相同请求返回首次结果；冲突或正在处理返回 HTTP 409。幂等状态保存在
+PostgreSQL，不依赖进程内缓存。
+
+## 7. 真实验收结果
+
+FastAPI corpus：
+
+```text
+commit: 628663f4f899c465da423bce681c7adf9a218948
+Chinese Markdown: 124
+Documents: 124
+Chunks: 1145
+Embedding HTTP requests: 126
+Initial ingestion: 14.77 s
+BM25 build: 663.53 ms
+```
+
+相同语料使用新的 Idempotency Key 再摄取：
+
+```text
+Documents: 124
+Chunks: 1145
+Embedded: 0
+Embedding skipped: 1145
+Embedding HTTP requests: 0
+```
+
+10 条固定 Query 的一次实测：
+
+| Method | Recall@5 | Recall@10 | MRR@10 | Avg ms | P95 ms |
+|---|---:|---:|---:|---:|---:|
+| BM25 | 0.900 | 0.900 | 0.717 | 36.32 | 194.18 |
+| Dense exact | 0.800 | 0.900 | 0.767 | 23.35 | 32.67 |
+| Dense HNSW | 0.800 | 0.900 | 0.767 | 13.59 | 18.15 |
+| Hybrid RRF | 0.900 | 0.900 | 0.775 | 13.23 | 15.74 |
+| Hybrid RRF + Reranker | 0.900 | 1.000 | 0.867 | 215.96 | 278.57 |
+
+数据集很小，数值不具有学术结论意义。它们用于证明系统能一致地计算、展示并比较检索质量和
+延迟。
+
+验收中观察到：
+
+- “怎样让接口接收一个 JSON 对象？”：BM25 Top-10 漏掉，Dense 排第 6，Reranker 提到第 1。
+- “如何让多个接口共享同一段参数检查逻辑？”：BM25 排第 1，Dense Top-10 漏掉。
+- HNSW 与 exact 在该小数据集上的 Recall/MRR 相同，平均 Dense 阶段耗时更低。
+- Reranker 将 Recall@10 从 0.9 提升到 1.0，并改变最终候选顺序。
+
+## 8. 工程检查
+
+```powershell
+.\.venv\Scripts\pytest.exe
+.\.venv\Scripts\ruff.exe check src tests
+.\.venv\Scripts\ruff.exe format src tests --check
+.\.venv\Scripts\mypy.exe src tests
+```
+
+最终施工阶段运行结果：
+
+```text
+83 tests passed
+coverage > 80%
+Ruff passed
+Mypy strict passed
+```
+
+测试包含真实 PostgreSQL、pgvector、真实本地模型 smoke test、Mock HTTP 契约测试、HNSW
+`EXPLAIN (ANALYZE, BUFFERS)`、摄取并发、REST 幂等和 CLI/REST 顺序一致性。
+
+## 9. 项目结构
+
+```text
+migrations/                 PostgreSQL + pgvector migration
+src/rag_demo/
+  application.py            共享资源生命周期与对象组装
+  markdown_parser.py        Markdown 结构解析
+  chunker.py                Heading-aware Chunk
+  embedding_client.py       llama.cpp Embedding Client
+  ingest_service.py         事务、增量与幂等摄取
+  dense_retriever.py        exact/HNSW pgvector 检索
+  bm25_retriever.py         jieba + bm25s generation
+  rrf.py                    Reciprocal Rank Fusion
+  reranker_client.py        llama.cpp Reranker Client
+  search_service.py         并行召回与最终排名
+  api.py                    FastAPI REST
+  cli.py                    Typer CLI
+  corpus.py                 FastAPI sparse clone
+  evaluation.py             五路质量与延迟评测
+tests/                      unit + integration
+data/evaluation_queries.json
+docs/construction/          分阶段施工与验证记录
+```
+
+## 10. 常见问题
+
+`doctor` 显示 BM25 未就绪：
+
+```powershell
+.\.venv\Scripts\python.exe -m rag_demo bm25 rebuild
+```
+
+`ready` 返回 503：
+
+- 确认数据库有 Chunk；
+- 确认 HNSW 存在；
+- 确认 BM25 `CURRENT` 已建立。
+
+Windows 下 Psycopg 异步报 Proactor 错误：
+
+- 从项目 CLI 启动；项目入口会使用 Windows Selector event loop。
+
+切换模型后搜索不到旧语料：
+
+- 重新摄取全部语料；
+- 重建 BM25；
+- 用 `doctor` 确认 corpus vector space 与配置一致。
+
+## 施工记录
+
+每个阶段的目标、取舍、失败案例、测试证据和面试讲解要点都保存在
+[`docs/construction/`](docs/construction/README.md)。

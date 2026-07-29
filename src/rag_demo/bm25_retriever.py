@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import math
 import os
 import re
@@ -19,6 +20,8 @@ import bm25s  # type: ignore[import-untyped]
 import jieba  # type: ignore[import-untyped]
 
 from rag_demo.db import Database, Row
+
+jieba.setLogLevel(logging.WARNING)
 
 _INDEX_FORMAT_VERSION = 1
 _TOKENIZER_VERSION = "jieba-search-code-v1"

@@ -21,6 +21,7 @@ from rag_demo.dense_retriever import DenseSearchMode
 from rag_demo.evaluation import (
     BenchmarkReport,
     BenchmarkService,
+    EvaluationMethod,
     load_evaluation_queries,
 )
 from rag_demo.ingest_service import IngestResult
@@ -358,6 +359,10 @@ def benchmark(
             help="Committed relevance-labelled query set.",
         ),
     ] = Path("data/evaluation_queries.json"),
+    debug: Annotated[
+        bool,
+        typer.Option(help="Display the first relevant rank for every query."),
+    ] = False,
 ) -> None:
     """Compare quality and latency for five retrieval variants."""
     report = run_async(_run_benchmark(Settings(), queries))
@@ -377,6 +382,26 @@ def benchmark(
             f"{metrics.mrr_at_10:.3f}",
             f"{metrics.average_latency_ms:.2f}",
             f"{metrics.p95_latency_ms:.2f}",
+        )
+    console.print(table)
+    if debug:
+        _print_benchmark_details(report)
+
+
+def _print_benchmark_details(report: BenchmarkReport) -> None:
+    by_method = {evaluation.method: evaluation.measurements for evaluation in report.evaluations}
+    first_method = report.evaluations[0].measurements
+    table = Table(title="Per-query first relevant rank")
+    table.add_column("Query")
+    for method in EvaluationMethod:
+        table.add_column(method.value, justify="right")
+    for index, measurement in enumerate(first_method):
+        table.add_row(
+            measurement.query.query,
+            *(
+                str(by_method[method][index].first_relevant_rank or "-")
+                for method in EvaluationMethod
+            ),
         )
     console.print(table)
 

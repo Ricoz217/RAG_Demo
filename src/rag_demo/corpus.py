@@ -8,7 +8,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 FASTAPI_REPOSITORY_URL = "https://github.com/fastapi/fastapi.git"
-FASTAPI_SPARSE_PATHS = ("docs/zh/docs", "docs/en/docs", "LICENSE")
+FASTAPI_SPARSE_PATHS = ("docs/zh/docs", "docs/en/docs")
+
+
+class CorpusGitError(RuntimeError):
+    """Raised when a corpus Git operation fails."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,6 +85,12 @@ def _download_corpus_sync(
     target = destination.resolve()
     if target.exists():
         if (target / ".git").exists():
+            if not all((target / path).exists() for path in sparse_paths):
+                if _git_output(target, "status", "--porcelain"):
+                    raise CorpusGitError(
+                        "existing corpus checkout has local changes; sparse paths were not modified"
+                    )
+                _run_git(target, "sparse-checkout", "set", *sparse_paths)
             return inspect_corpus(target)
         if any(target.iterdir()):
             raise FileExistsError(f"destination exists and is not a Git repository: {target}")
@@ -117,10 +127,14 @@ def _run_git(
     if repository is not None:
         command.extend(("-C", str(repository)))
     command.extend(arguments)
-    return subprocess.run(
-        command,
-        check=True,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-    )
+    try:
+        return subprocess.run(
+            command,
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or "").strip() or "unknown Git error"
+        raise CorpusGitError(f"git {arguments[0]} failed: {detail}") from exc
