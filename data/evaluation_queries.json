@@ -1,0 +1,107 @@
+[
+  {
+    "query": "OAuth2PasswordBearer 有什么作用？",
+    "relevant_path_contains": [
+      "tutorial/security/first-steps"
+    ],
+    "relevant_heading_contains": [
+      "OAuth2PasswordBearer"
+    ],
+    "category": "exact-term"
+  },
+  {
+    "query": "BackgroundTasks 应该怎么使用？",
+    "relevant_path_contains": [
+      "tutorial/background-tasks"
+    ],
+    "relevant_heading_contains": [
+      "后台任务"
+    ],
+    "category": "exact-term"
+  },
+  {
+    "query": "422 状态码通常在什么情况下出现？",
+    "relevant_path_contains": [
+      "tutorial/handling-errors",
+      "tutorial/body"
+    ],
+    "relevant_heading_contains": [
+      "请求验证",
+      "422"
+    ],
+    "category": "exact-term"
+  },
+  {
+    "query": "怎样让接口接收一个 JSON 对象？",
+    "relevant_path_contains": [
+      "tutorial/body"
+    ],
+    "relevant_heading_contains": [
+      "请求体"
+    ],
+    "category": "semantic-query"
+  },
+  {
+    "query": "如何让多个接口共享同一段参数检查逻辑？",
+    "relevant_path_contains": [
+      "tutorial/dependencies"
+    ],
+    "relevant_heading_contains": [
+      "依赖"
+    ],
+    "category": "semantic-query"
+  },
+  {
+    "query": "请求结束以后怎样执行不阻塞响应的任务？",
+    "relevant_path_contains": [
+      "tutorial/background-tasks"
+    ],
+    "relevant_heading_contains": [
+      "后台任务"
+    ],
+    "category": "semantic-query"
+  },
+  {
+    "query": "FastAPI 的依赖项在同一次请求里会不会被反复执行？",
+    "relevant_path_contains": [
+      "tutorial/dependencies/sub-dependencies"
+    ],
+    "relevant_heading_contains": [
+      "依赖缓存",
+      "多次"
+    ],
+    "category": "hybrid"
+  },
+  {
+    "query": "如何使用 OAuth2 和 JWT 保护需要登录的接口？",
+    "relevant_path_contains": [
+      "tutorial/security/oauth2-jwt"
+    ],
+    "relevant_heading_contains": [
+      "OAuth2",
+      "JWT"
+    ],
+    "category": "hybrid"
+  },
+  {
+    "query": "上传文件和普通表单字段能否一起接收？",
+    "relevant_path_contains": [
+      "tutorial/request-forms-and-files"
+    ],
+    "relevant_heading_contains": [
+      "文件",
+      "表单"
+    ],
+    "category": "hybrid"
+  },
+  {
+    "query": "如何给 API 定义自定义异常处理器？",
+    "relevant_path_contains": [
+      "tutorial/handling-errors"
+    ],
+    "relevant_heading_contains": [
+      "异常处理器"
+    ],
+    "category": "hybrid"
+  }
+]

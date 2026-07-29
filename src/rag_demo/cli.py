@@ -1,5 +1,7 @@
 """Command-line interface for the Hybrid RAG demo."""
 
+import hashlib
+import json
 from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Annotated
@@ -13,8 +15,14 @@ from rag_demo import __version__
 from rag_demo.application import DoctorReport, RAGApplication
 from rag_demo.asyncio_compat import run_async
 from rag_demo.config import Settings
+from rag_demo.corpus import CorpusInfo, download_fastapi, inspect_corpus
 from rag_demo.db import Database, DatabaseStatus
 from rag_demo.dense_retriever import DenseSearchMode
+from rag_demo.evaluation import (
+    BenchmarkReport,
+    BenchmarkService,
+    load_evaluation_queries,
+)
 from rag_demo.ingest_service import IngestResult
 from rag_demo.migrations import apply_migrations
 from rag_demo.search_service import SearchCandidate, SearchRequest, SearchResponse
@@ -26,8 +34,10 @@ app = typer.Typer(
 )
 db_app = typer.Typer(help="Initialize and inspect PostgreSQL.")
 bm25_app = typer.Typer(help="Build and inspect the local BM25 index.")
+corpus_app = typer.Typer(help="Download and ingest the demo documentation corpus.")
 app.add_typer(db_app, name="db")
 app.add_typer(bm25_app, name="bm25")
+app.add_typer(corpus_app, name="corpus")
 console = Console()
 
 
@@ -178,6 +188,10 @@ def ingest(
             idempotency_key=idempotency_key,
         )
     )
+    _print_ingest_result(result)
+
+
+def _print_ingest_result(result: IngestResult) -> None:
     table = Table(title="Ingestion result")
     table.add_column("Metric")
     table.add_column("Value", justify="right")
@@ -192,6 +206,118 @@ def ingest(
     ):
         table.add_row(label, str(value))
     console.print(table)
+
+
+@corpus_app.command("download-fastapi")
+def corpus_download_fastapi(
+    destination: Annotated[
+        Path,
+        typer.Option(help="Ignored local checkout destination."),
+    ] = Path("data/corpus/fastapi"),
+) -> None:
+    """Shallow sparse-clone FastAPI's Chinese and English docs."""
+    info = run_async(download_fastapi(destination))
+    _print_corpus_info(info)
+
+
+async def _ingest_fastapi(
+    settings: Settings,
+    *,
+    info: CorpusInfo,
+    language: str,
+    idempotency_key: str,
+) -> IngestResult:
+    source = info.source_directory(language)
+    if not source.is_dir():
+        raise FileNotFoundError(source)
+    async with RAGApplication(settings) as application:
+        ingestor = application.create_ingestor(
+            source_repo=info.repository_url,
+            source_commit=info.commit,
+            source_root=info.path,
+            language=language,
+        )
+        return await ingestor.ingest_path(
+            source,
+            idempotency_key=idempotency_key,
+        )
+
+
+@corpus_app.command("ingest-fastapi")
+def corpus_ingest_fastapi(
+    destination: Annotated[
+        Path,
+        typer.Option(
+            exists=True,
+            file_okay=False,
+            help="Existing FastAPI checkout.",
+        ),
+    ] = Path("data/corpus/fastapi"),
+    language: Annotated[
+        str,
+        typer.Option(help="Documentation language: zh or en."),
+    ] = "zh",
+    idempotency_key: Annotated[
+        str | None,
+        typer.Option(help="Override the generated stable ingestion key."),
+    ] = None,
+) -> None:
+    """Ingest one FastAPI documentation language with Git provenance."""
+    settings = Settings()
+    info = inspect_corpus(destination)
+    stable_key = idempotency_key or _fastapi_ingestion_key(
+        info,
+        language=language,
+        settings=settings,
+    )
+    result = run_async(
+        _ingest_fastapi(
+            settings,
+            info=info,
+            language=language,
+            idempotency_key=stable_key,
+        )
+    )
+    _print_corpus_info(info)
+    console.print(f"Language: {language}")
+    console.print(f"Idempotency-Key: {stable_key}")
+    _print_ingest_result(result)
+
+
+def _print_corpus_info(info: CorpusInfo) -> None:
+    table = Table(title="FastAPI corpus")
+    table.add_column("Property")
+    table.add_column("Value")
+    table.add_row("Path", str(info.path))
+    table.add_row("Repository", info.repository_url)
+    table.add_row("Commit", info.commit)
+    table.add_row("Chinese Markdown", str(info.zh_markdown_count))
+    table.add_row("English Markdown", str(info.en_markdown_count))
+    console.print(table)
+
+
+def _fastapi_ingestion_key(
+    info: CorpusInfo,
+    *,
+    language: str,
+    settings: Settings,
+) -> str:
+    canonical = json.dumps(
+        {
+            "repository": info.repository_url,
+            "commit": info.commit,
+            "language": language,
+            "embedding_model": settings.embedding_model,
+            "embedding_dimensions": settings.embedding_dimensions,
+            "chunk_target_chars": settings.chunk_target_chars,
+            "chunk_max_chars": settings.chunk_max_chars,
+            "chunk_overlap_chars": settings.chunk_overlap_chars,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:20]
+    return f"fastapi-{language}-{digest}"
 
 
 async def _rebuild_bm25(settings: Settings) -> tuple[str, int, float]:
@@ -210,6 +336,48 @@ def bm25_rebuild() -> None:
     table.add_row("BM25 generation", generation)
     table.add_row("Chunks", str(chunk_count))
     table.add_row("Build ms", f"{build_ms:.2f}")
+    console.print(table)
+
+
+async def _run_benchmark(
+    settings: Settings,
+    queries_path: Path,
+) -> BenchmarkReport:
+    queries = load_evaluation_queries(queries_path)
+    async with RAGApplication(settings) as application:
+        return await BenchmarkService(application).benchmark(queries)
+
+
+@app.command("benchmark")
+def benchmark(
+    queries: Annotated[
+        Path,
+        typer.Option(
+            exists=True,
+            dir_okay=False,
+            help="Committed relevance-labelled query set.",
+        ),
+    ] = Path("data/evaluation_queries.json"),
+) -> None:
+    """Compare quality and latency for five retrieval variants."""
+    report = run_async(_run_benchmark(Settings(), queries))
+    table = Table(title="Retrieval benchmark")
+    table.add_column("Method")
+    table.add_column("Recall@5", justify="right")
+    table.add_column("Recall@10", justify="right")
+    table.add_column("MRR@10", justify="right")
+    table.add_column("Avg ms", justify="right")
+    table.add_column("P95 ms", justify="right")
+    for evaluation in report.evaluations:
+        metrics = evaluation.metrics
+        table.add_row(
+            evaluation.method.value,
+            f"{metrics.recall_at_5:.3f}",
+            f"{metrics.recall_at_10:.3f}",
+            f"{metrics.mrr_at_10:.3f}",
+            f"{metrics.average_latency_ms:.2f}",
+            f"{metrics.p95_latency_ms:.2f}",
+        )
     console.print(table)
 
 

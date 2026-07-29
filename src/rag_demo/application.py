@@ -166,6 +166,10 @@ class RAGApplication:
         return self._required(self._bm25_manager)
 
     @property
+    def dense_service(self) -> DenseQueryService:
+        return self._required(self._dense_service)
+
+    @property
     def bm25_retriever(self) -> BM25Retriever | None:
         return self._bm25_retriever
 

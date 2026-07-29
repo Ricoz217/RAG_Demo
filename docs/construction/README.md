@@ -14,4 +14,5 @@
 | 3A | [Reranker 与最终搜索服务](phase-03a-reranker-search-service.md) | 已完成 |
 | 3B | [应用生命周期与 Typer CLI](phase-03b-application-cli.md) | 已完成 |
 | 3C | [FastAPI REST 与接口一致性](phase-03c-fastapi-rest.md) | 已完成 |
-| 4 | 语料、评测与验收 | 待施工 |
+| 4A | [FastAPI 语料工具与五路评测](phase-04a-corpus-evaluation.md) | 已完成 |
+| 4B | 真实语料验收、README 与最终演示 | 待施工 |
