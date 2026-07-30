@@ -133,15 +133,16 @@ PyYAML 6.0.3
 - Parser/Chunker 定向测试：`19 passed`
 - 全部单元测试：`63 passed`
 - 本次改动模块覆盖率：Parser `95%`、Chunker `96%`
+- 全套测试：`86 passed`
+- 总覆盖率：`84.23%`，通过项目 `80%` 门槛
 - Ruff：通过
 - Mypy strict：通过
 - 真实文件 smoke test：
   - 标准 `python-patterns/SKILL.md`：Front Matter、首个 H1 和 41 个 Block 解析正确；
   - `group_chat_system_0710.md`：Preamble、首个 H1 和 50 个 Block 解析正确。
 
-全套 86 项测试尝试运行时，PostgreSQL `127.0.0.1:5432` 无响应，集成测试在连接池初始化
-阶段超时；Embedding 与 Reranker 健康端点均返回 200。该外部基础设施状态与本次纯解析
-改动无关，因此没有擅自启动或修改数据库服务。
+首次运行集成测试时 PostgreSQL 尚未启动；数据库恢复后重新执行全部 86 项测试，数据库、
+Embedding、Reranker、摄取、Dense、BM25、CLI 和 REST 集成链路全部通过。
 
 ## 讲解要点
 
