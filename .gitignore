@@ -32,3 +32,4 @@ data/corpus/*
 data/indexes/*
 !data/indexes/.gitkeep
 
+/playground.py
