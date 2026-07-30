@@ -8,7 +8,7 @@ from itertools import groupby
 
 from rag_demo.markdown_parser import ParsedBlock, ParsedMarkdownDocument
 
-CHUNKER_VERSION = "markdown-structure-v1"
+CHUNKER_VERSION = "markdown-structure-v2"
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,7 +123,11 @@ class MarkdownChunker:
         content_raw: str,
     ) -> Chunk:
         breadcrumb = " / ".join(heading_path) if heading_path else "（文档正文）"
-        retrieval_text = f"[文档：{document.title}]\n[章节：{breadcrumb}]\n{content_raw}"
+        context = []
+        if document.title is not None:
+            context.append(f"[文档：{document.title}]")
+        context.extend((f"[章节：{breadcrumb}]", content_raw))
+        retrieval_text = "\n".join(context)
         return Chunk(
             chunk_index=chunk_index,
             chunker_version=self._version,

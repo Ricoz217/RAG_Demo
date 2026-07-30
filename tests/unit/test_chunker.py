@@ -24,7 +24,15 @@ def test_chunker_preserves_complete_code_block_within_maximum() -> None:
 
 def test_chunker_adds_retrieval_context_and_stable_metadata() -> None:
     document = parse_markdown(
-        "# FastAPI 教程\n\n## 请求体\n\n使用模型声明 JSON 对象。",
+        (
+            "---\n"
+            "title: FastAPI 教程\n"
+            "description: 不应自动传播的文档摘要。\n"
+            "---\n\n"
+            "# FastAPI 教程\n\n"
+            "## 请求体\n\n"
+            "使用模型声明 JSON 对象。"
+        ),
         source_path=Path("tutorial/body.md"),
     )
 
@@ -32,12 +40,37 @@ def test_chunker_adds_retrieval_context_and_stable_metadata() -> None:
 
     assert len(chunks) == 1
     assert chunks[0].chunk_index == 0
-    assert chunks[0].heading_path == ("请求体",)
+    assert chunks[0].heading_path == ("FastAPI 教程", "请求体")
     assert chunks[0].retrieval_text == (
-        "[文档：FastAPI 教程]\n[章节：请求体]\n使用模型声明 JSON 对象。"
+        "[文档：FastAPI 教程]\n"
+        "[章节：FastAPI 教程 / 请求体]\n"
+        "使用模型声明 JSON 对象。"
     )
+    assert "不应自动传播的文档摘要" not in chunks[0].retrieval_text
     assert chunks[0].char_count == len(chunks[0].content_raw)
     assert len(chunks[0].content_hash) == 64
+
+
+def test_chunker_does_not_add_source_path_or_preamble_to_other_chunks() -> None:
+    document = parse_markdown(
+        """你是一个QQ群机器人 Agent 的主控
+
+# 任务
+
+任务正文。
+""",
+        source_path=Path("prompt/group_chat_system_0710.md"),
+    )
+
+    chunks = MarkdownChunker(target_chars=100, max_chars=150, overlap_chars=20).chunk(document)
+
+    assert [chunk.heading_path for chunk in chunks] == [(), ("任务",)]
+    assert chunks[0].retrieval_text == (
+        "[章节：（文档正文）]\n你是一个QQ群机器人 Agent 的主控"
+    )
+    assert chunks[1].retrieval_text == "[章节：任务]\n任务正文。"
+    assert all("group_chat_system_0710" not in chunk.retrieval_text for chunk in chunks)
+    assert "QQ群机器人 Agent 的主控" not in chunks[1].retrieval_text
 
 
 def test_chunker_never_combines_different_heading_paths() -> None:
@@ -57,7 +90,10 @@ def test_chunker_never_combines_different_heading_paths() -> None:
 
     chunks = MarkdownChunker(target_chars=100, max_chars=150, overlap_chars=20).chunk(document)
 
-    assert [chunk.heading_path for chunk in chunks] == [("第一节",), ("第二节",)]
+    assert [chunk.heading_path for chunk in chunks] == [
+        ("标题", "第一节"),
+        ("标题", "第二节"),
+    ]
     assert "第一节内容" not in chunks[1].content_raw
 
 
@@ -79,8 +115,12 @@ def test_chunker_overlap_stays_inside_the_same_section() -> None:
 
     chunks = chunker.chunk(document)
 
-    first_section_chunks = [chunk for chunk in chunks if chunk.heading_path == ("第一节",)]
-    second_section_chunk = next(chunk for chunk in chunks if chunk.heading_path == ("第二节",))
+    first_section_chunks = [
+        chunk for chunk in chunks if chunk.heading_path == ("标题", "第一节")
+    ]
+    second_section_chunk = next(
+        chunk for chunk in chunks if chunk.heading_path == ("标题", "第二节")
+    )
     assert len(first_section_chunks) >= 2
     assert first_section_chunks[0].content_raw[-12:] in first_section_chunks[1].content_raw
     assert "FIRST_END" not in second_section_chunk.content_raw
@@ -97,7 +137,7 @@ def test_chunker_splits_oversized_code_block_without_exceeding_maximum() -> None
 
     assert len(chunks) > 1
     assert all(chunk.char_count <= 140 for chunk in chunks)
-    assert all(chunk.heading_path == ("大代码块",) for chunk in chunks)
+    assert all(chunk.heading_path == ("标题", "大代码块") for chunk in chunks)
     assert any("line_000" in chunk.content_raw for chunk in chunks)
     assert any("line_059" in chunk.content_raw for chunk in chunks)
 

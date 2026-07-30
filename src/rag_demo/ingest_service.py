@@ -352,7 +352,7 @@ class DocumentIngestor:
         connection: AsyncConnection[Row],
         *,
         source_path: str,
-        title: str,
+        title: str | None,
         content_hash: str,
     ) -> int:
         cursor = await connection.execute(
