@@ -104,6 +104,8 @@ class QueryEmbeddingProvider(Protocol):
         """Embed query texts in input order."""
 
 
+# 在初步筛选向量里面，漏了 commit 版本号
+# 数一下，一共 6 个参数，说实话，写得有点屎
 _DENSE_SQL = """
 SELECT
     ranked_chunks.chunk_id,
@@ -181,9 +183,12 @@ class DenseRetriever:
         top_k: int,
         mode: DenseSearchMode,
     ) -> DenseRetrievalResponse:
-        """Return cosine-ranked Chunks using the requested execution mode."""
+        """
+        Return cosine-ranked Chunks using the requested execution mode.
+        就是向量检索喵
+        """
         vector = self._validate_vector(query_vector)
-        self._validate_top_k(top_k)
+        self._validate_top_k(top_k)  # 就一个简单合规性判断
         started = time.perf_counter()
 
         async with self._database.connection() as connection:
@@ -210,12 +215,15 @@ class DenseRetriever:
         top_k: int,
         mode: DenseSearchMode,
     ) -> DenseQueryPlan:
-        """Execute and return an ANALYZE/BUFFERS plan for demonstration."""
+        """
+        Execute and return an ANALYZE/BUFFERS plan for demonstration.
+        Demo 演示用，生产不用
+        """
         vector = self._validate_vector(query_vector)
         self._validate_top_k(top_k)
 
         async with self._database.connection() as connection:
-            await self._configure_mode(connection, mode)
+            await self._configure_mode(connection, mode)  # 手动切换是否使用 HNSW，只在 Demo 使用，生产绝对不需要，因为 PG 本身自带自动选择模式的 Planner
             cursor = await connection.execute(
                 f"EXPLAIN (ANALYZE, BUFFERS, FORMAT TEXT) {_DENSE_SQL}",
                 self._query_parameters(vector, top_k),
@@ -268,6 +276,7 @@ class DenseRetriever:
         vector: EmbeddingVector,
         top_k: int,
     ) -> tuple[object, ...]:
+        """写得有点屎说实话"""
         return (
             vector,
             vector,
@@ -320,13 +329,16 @@ class DenseQueryService:
         top_k: int,
         mode: DenseSearchMode = DenseSearchMode.HNSW,
     ) -> DenseQueryResponse:
-        """Embed and search one non-empty query."""
+        """
+        Embed and search one non-empty query.
+        检索服务入口
+        """
         if not query.strip():
             raise ValueError("query must not be empty")
 
         total_started = time.perf_counter()
         embedding_started = time.perf_counter()
-        vectors = await self._embedding_client.embed((query,))
+        vectors = await self._embedding_client.embed((query,))  # 获取嵌入向量
         query_embedding_ms = (time.perf_counter() - embedding_started) * 1000
         if len(vectors) != 1:
             raise RuntimeError("query embedding service must return exactly one vector")

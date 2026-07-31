@@ -54,7 +54,7 @@ class Database:
             min_size=min_size,
             max_size=max_size,
             open=False,
-            kwargs={"row_factory": dict_row},
+            kwargs={"row_factory": dict_row},  # row 模式，返回字典
             configure=_configure_connection,
             name="rag-demo",
         )
@@ -93,18 +93,24 @@ class Database:
                     current_database() AS current_database,
                     current_setting('server_version') AS server_version
                 """
-            )
+            )  # 设置 cursor 上下文
             identity = await identity_cursor.fetchone()
             if identity is None:
                 raise RuntimeError("database identity query returned no row")
 
             vector_cursor = await connection.execute(
                 "SELECT extversion FROM pg_extension WHERE extname = 'vector'"
-            )
+            )  # 检查当前 PG 是否有 pg_vector 插件
             vector_row = await vector_cursor.fetchone()
             if vector_row is None:
                 raise RuntimeError("pgvector extension is not installed")
 
+            # 获取系统信息，进行筛选
+            # 找符合当前 schema  当前是 'public'
+            # 找 schema 中名为 "chunks" 的表
+            # 找 chunks 中名为 "embedding" 的列
+            # 同时未标记为已删除
+            # 这里是为了获取列信息
             type_cursor = await connection.execute(
                 """
                 SELECT format_type(attribute.atttypid, attribute.atttypmod) AS column_type
@@ -120,7 +126,7 @@ class Database:
             type_row = await type_cursor.fetchone()
             if type_row is None:
                 raise RuntimeError("chunks.embedding column does not exist")
-            dimensions = _parse_vector_dimensions(type_row["column_type"])
+            dimensions = _parse_vector_dimensions(type_row["column_type"])  # 用正则获取维度
 
             facts_cursor = await connection.execute(
                 """

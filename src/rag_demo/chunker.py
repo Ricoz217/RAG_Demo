@@ -24,7 +24,7 @@ class Chunk:
     content_hash: str
 
 
-class MarkdownChunker:
+class MarkdownChunker:  # 惰性拆分，用的时候才拆一次，不保存
     """Chunk consecutive blocks without mixing different heading paths."""
 
     def __init__(
@@ -63,11 +63,11 @@ class MarkdownChunker:
         """Create globally indexed chunks for a parsed document."""
         raw_chunks: list[tuple[tuple[str, ...], str]] = []
 
-        for (_, heading_path), section_blocks in groupby(
+        for (_, heading_path), section_blocks in groupby(  # 提取同一段/同一主体的内容
             document.blocks,
             key=_section_key,
         ):
-            section_texts = self._chunk_section(tuple(section_blocks))
+            section_texts = self._chunk_section(tuple(section_blocks))  # 将同一段尽量拆分，同时防止与其他段乱串掉
             raw_chunks.extend((heading_path, text) for text in section_texts)
 
         return tuple(
@@ -81,7 +81,7 @@ class MarkdownChunker:
 
         for block in blocks:
             text = block.text
-            if len(text) > self._max_chars:
+            if len(text) > self._max_chars:  # 拆分超长
                 if current:
                     completed.append(current)
                     current = ""
@@ -93,7 +93,7 @@ class MarkdownChunker:
                 continue
 
             candidate = f"{current}\n\n{text}"
-            if len(current) < self._target_chars and len(candidate) <= self._max_chars:
+            if len(current) < self._target_chars and len(candidate) <= self._max_chars:  # 字数太少，不够，继续合并
                 current = candidate
                 continue
 
@@ -120,7 +120,7 @@ class MarkdownChunker:
             segments.append(text[start:end])
             if end == len(text):
                 break
-            start = end - self._overlap_chars
+            start = end - self._overlap_chars  # 这里产生 overlap
 
         return tuple(segments)
 

@@ -112,14 +112,14 @@ class DocumentIngestor:
     ) -> IngestResult:
         """Ingest one Markdown file or a directory tree exactly once per key."""
         started = time.perf_counter()
-        files = _markdown_files(source)
+        files = _markdown_files(source)  # 没有递归设计，只是统计文件夹内所有的 md
         request_hash = self._request_hash(source)
         effective_key = (
             self._key_from_request_hash(request_hash)
             if idempotency_key is None
             else idempotency_key
         )
-        cached = await self._claim_idempotency(effective_key, request_hash)
+        cached = await self._claim_idempotency(effective_key, request_hash)  # 幂等性校验
         if cached is not None:
             return cached
 
@@ -156,6 +156,7 @@ class DocumentIngestor:
         return f"ingest-{request_hash}"
 
     def _request_hash(self, source: Path) -> str:
+        """生成请求唯一哈希"""
         canonical = json.dumps(
             {
                 "source": self._relative_source_path(source),
@@ -177,8 +178,8 @@ class DocumentIngestor:
 
     async def _claim_idempotency(
         self,
-        idempotency_key: str,
-        request_hash: str,
+        idempotency_key: str,  # 外部提供的，作为本次请求的幂等性id
+        request_hash: str,  # 请求唯一哈希不仅看请求内容，还看文档的归属、版本(git)
     ) -> IngestResult | None:
         if not idempotency_key.strip():
             raise ValueError("idempotency_key must not be empty")
@@ -198,9 +199,12 @@ class DocumentIngestor:
                     """,
                     (idempotency_key, request_hash),
                 )
+
+                # 成功 INSERT 就返回 None 继续处理
                 if await inserted_cursor.fetchone() is not None:
                     return None
 
+                # 锁住幂等性状态行
                 existing_cursor = await connection.execute(
                     """
                     SELECT request_hash, status, result
@@ -279,10 +283,11 @@ class DocumentIngestor:
             )
 
     async def _ingest_document(self, path: Path) -> _DocumentResult:
+        """ingest 业务逻辑"""
         parse_started = time.perf_counter()
         markdown = await asyncio.to_thread(path.read_text, encoding="utf-8")
-        document = parse_markdown(markdown, source_path=path)
-        chunks = self._chunker.chunk(document)
+        document = parse_markdown(markdown, source_path=path)  # Markdown parser
+        chunks = self._chunker.chunk(document)  # get_chunk
         parse_ms = (time.perf_counter() - parse_started) * 1000
         source_path = self._relative_source_path(path)
 
@@ -295,6 +300,7 @@ class DocumentIngestor:
 
         async with self._database.connection() as connection:
             async with connection.transaction():
+                # 获取分布式事务锁
                 await connection.execute(
                     "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
                     (self._source_lock_key(source_path),),
@@ -318,7 +324,7 @@ class DocumentIngestor:
                     embedding_started = time.perf_counter()
                     vectors = await self._embedding_client.embed(
                         [chunk.retrieval_text for chunk in changed]
-                    )
+                    )  # 获取嵌入向量，批量并发
                     embedding_ms = (time.perf_counter() - embedding_started) * 1000
                     if len(vectors) != len(changed):
                         raise RuntimeError("embedding provider returned the wrong vector count")
@@ -329,6 +335,10 @@ class DocumentIngestor:
                     embedded_count = len(changed)
                     request_count = math.ceil(len(changed) / self._embedding_client.batch_size)
 
+                # 这里有大问题，作为 Demo 可以这样写，生产绝对不能！
+                # 循环执行单条 SQL，吞吐问题很大。
+                # 应该先全部收集，然后做批量任务，批量执行 SQL
+                # 如果还是很大，就用临时表 + 合并
                 for chunk in changed:
                     vector = vectors_by_index[chunk.chunk_index]
                     self._validate_vector(vector)
@@ -370,6 +380,7 @@ class DocumentIngestor:
         title: str | None,
         content_hash: str,
     ) -> int:
+        """插入文档表，作为 chunk 目录"""
         cursor = await connection.execute(
             """
             INSERT INTO documents (
@@ -407,6 +418,7 @@ class DocumentIngestor:
         connection: AsyncConnection[Row],
         document_id: int,
     ) -> dict[int, Row]:
+        """获取当前已存在的 Chunk"""
         cursor = await connection.execute(
             """
             SELECT
@@ -440,7 +452,9 @@ class DocumentIngestor:
         chunk: Chunk,
         embedding: EmbeddingVector,
     ) -> None:
+        """真正传入向量到数据库的逻辑"""
         await connection.execute(
+            # 这一个 SQL 整整 12 个 `%s`，只有 AI 能干得出来了
             """
             INSERT INTO chunks (
                 document_id,
