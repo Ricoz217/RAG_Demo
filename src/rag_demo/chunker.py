@@ -50,6 +50,15 @@ class MarkdownChunker:
     def version(self) -> str:
         return self._version
 
+    @property
+    def configuration(self) -> dict[str, int]:
+        """Return parameters that affect chunk boundaries."""
+        return {
+            "target_chars": self._target_chars,
+            "max_chars": self._max_chars,
+            "overlap_chars": self._overlap_chars,
+        }
+
     def chunk(self, document: ParsedMarkdownDocument) -> tuple[Chunk, ...]:
         """Create globally indexed chunks for a parsed document."""
         raw_chunks: list[tuple[tuple[str, ...], str]] = []

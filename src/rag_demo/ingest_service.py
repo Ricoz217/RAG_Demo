@@ -108,13 +108,18 @@ class DocumentIngestor:
         self,
         source: Path,
         *,
-        idempotency_key: str,
+        idempotency_key: str | None = None,
     ) -> IngestResult:
         """Ingest one Markdown file or a directory tree exactly once per key."""
         started = time.perf_counter()
         files = _markdown_files(source)
         request_hash = self._request_hash(source)
-        cached = await self._claim_idempotency(idempotency_key, request_hash)
+        effective_key = (
+            self._key_from_request_hash(request_hash)
+            if idempotency_key is None
+            else idempotency_key
+        )
+        cached = await self._claim_idempotency(effective_key, request_hash)
         if cached is not None:
             return cached
 
@@ -136,21 +141,31 @@ class DocumentIngestor:
                 database_insert_ms=sum(item.database_insert_ms for item in document_results),
                 total_ms=(time.perf_counter() - started) * 1000,
             )
-            await self._complete_idempotency(idempotency_key, request_hash, result)
+            await self._complete_idempotency(effective_key, request_hash, result)
             return result
         except Exception:
-            await self._fail_idempotency(idempotency_key, request_hash)
+            await self._fail_idempotency(effective_key, request_hash)
             raise
+
+    def idempotency_key_for(self, source: Path) -> str:
+        """Return the stable default key for one logical ingestion request."""
+        return self._key_from_request_hash(self._request_hash(source))
+
+    @staticmethod
+    def _key_from_request_hash(request_hash: str) -> str:
+        return f"ingest-{request_hash}"
 
     def _request_hash(self, source: Path) -> str:
         canonical = json.dumps(
             {
-                "source": source.resolve().as_posix(),
+                "source": self._relative_source_path(source),
                 "source_repo": self._source_repo,
                 "source_commit": self._source_commit,
-                "source_root": self._source_root.as_posix(),
                 "language": self._language,
-                "chunker_version": self._chunker.version,
+                "chunker": {
+                    "version": self._chunker.version,
+                    **self._chunker.configuration,
+                },
                 "embedding_model": self._embedding_client.model,
                 "embedding_dimensions": self._embedding_client.dimensions,
             },

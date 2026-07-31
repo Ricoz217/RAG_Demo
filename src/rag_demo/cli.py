@@ -1,7 +1,5 @@
 """Command-line interface for the Hybrid RAG demo."""
 
-import hashlib
-import json
 from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Annotated
@@ -127,8 +125,8 @@ async def _ingest(
     source_commit: str,
     source_root: Path,
     language: str,
-    idempotency_key: str,
-) -> IngestResult:
+    idempotency_key: str | None,
+) -> tuple[IngestResult, str]:
     async with RAGApplication(settings) as application:
         ingestor = application.create_ingestor(
             source_repo=source_repo,
@@ -136,10 +134,16 @@ async def _ingest(
             source_root=source_root,
             language=language,
         )
-        return await ingestor.ingest_path(
-            source,
-            idempotency_key=idempotency_key,
+        effective_key = (
+            ingestor.idempotency_key_for(source)
+            if idempotency_key is None
+            else idempotency_key
         )
+        result = await ingestor.ingest_path(
+            source,
+            idempotency_key=effective_key,
+        )
+        return result, effective_key
 
 
 @app.command("ingest")
@@ -169,16 +173,16 @@ def ingest(
         ),
     ],
     idempotency_key: Annotated[
-        str,
-        typer.Option(help="Stable key for this exact ingestion request."),
-    ],
+        str | None,
+        typer.Option(help="Override the generated stable ingestion key."),
+    ] = None,
     language: Annotated[
         str,
         typer.Option(help="BCP-47-style source language label."),
     ] = "zh",
 ) -> None:
     """Parse, embed, and atomically upsert Markdown documents."""
-    result = run_async(
+    result, stable_key = run_async(
         _ingest(
             Settings(),
             source=source,
@@ -189,6 +193,7 @@ def ingest(
             idempotency_key=idempotency_key,
         )
     )
+    console.print(f"Idempotency-Key: {stable_key}")
     _print_ingest_result(result)
 
 
@@ -226,8 +231,8 @@ async def _ingest_fastapi(
     *,
     info: CorpusInfo,
     language: str,
-    idempotency_key: str,
-) -> IngestResult:
+    idempotency_key: str | None,
+) -> tuple[IngestResult, str]:
     source = info.source_directory(language)
     if not source.is_dir():
         raise FileNotFoundError(source)
@@ -238,10 +243,16 @@ async def _ingest_fastapi(
             source_root=info.path,
             language=language,
         )
-        return await ingestor.ingest_path(
-            source,
-            idempotency_key=idempotency_key,
+        effective_key = (
+            ingestor.idempotency_key_for(source)
+            if idempotency_key is None
+            else idempotency_key
         )
+        result = await ingestor.ingest_path(
+            source,
+            idempotency_key=effective_key,
+        )
+        return result, effective_key
 
 
 @corpus_app.command("ingest-fastapi")
@@ -266,17 +277,12 @@ def corpus_ingest_fastapi(
     """Ingest one FastAPI documentation language with Git provenance."""
     settings = Settings()
     info = inspect_corpus(destination)
-    stable_key = idempotency_key or _fastapi_ingestion_key(
-        info,
-        language=language,
-        settings=settings,
-    )
-    result = run_async(
+    result, stable_key = run_async(
         _ingest_fastapi(
             settings,
             info=info,
             language=language,
-            idempotency_key=stable_key,
+            idempotency_key=idempotency_key,
         )
     )
     _print_corpus_info(info)
@@ -295,30 +301,6 @@ def _print_corpus_info(info: CorpusInfo) -> None:
     table.add_row("Chinese Markdown", str(info.zh_markdown_count))
     table.add_row("English Markdown", str(info.en_markdown_count))
     console.print(table)
-
-
-def _fastapi_ingestion_key(
-    info: CorpusInfo,
-    *,
-    language: str,
-    settings: Settings,
-) -> str:
-    canonical = json.dumps(
-        {
-            "repository": info.repository_url,
-            "commit": info.commit,
-            "language": language,
-            "embedding_model": settings.embedding_model,
-            "embedding_dimensions": settings.embedding_dimensions,
-            "chunk_target_chars": settings.chunk_target_chars,
-            "chunk_max_chars": settings.chunk_max_chars,
-            "chunk_overlap_chars": settings.chunk_overlap_chars,
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:20]
-    return f"fastapi-{language}-{digest}"
 
 
 async def _rebuild_bm25(settings: Settings) -> tuple[str, int, float]:
