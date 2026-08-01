@@ -12,6 +12,7 @@ from rag_demo.rrf import ScoredCandidate, reciprocal_rank_fusion
 from rag_demo.search_service import (
     HybridRecallResponse,
     HybridSearchService,
+    SearchConfidenceStatus,
     SearchRequest,
 )
 
@@ -106,8 +107,9 @@ class FakeRecallService:
 class FakeReranker:
     model = "test-reranker"
 
-    def __init__(self) -> None:
+    def __init__(self, scores: tuple[float, ...] = (0.1, 0.9, 0.2)) -> None:
         self.calls: list[tuple[str, tuple[str, ...]]] = []
+        self.scores = scores
 
     async def rerank(
         self,
@@ -115,7 +117,7 @@ class FakeReranker:
         documents: Sequence[str],
     ) -> tuple[float, ...]:
         self.calls.append((query, tuple(documents)))
-        return (0.1, 0.9, 0.2)
+        return self.scores
 
 
 def _request(*, use_reranker: bool) -> SearchRequest:
@@ -139,6 +141,7 @@ async def test_hybrid_search_reranks_rrf_top_k_and_preserves_all_scores() -> Non
     service = HybridSearchService(
         recall_service=recall,
         reranker_client=reranker,
+        reranker_low_confidence_threshold=-4.0,
     )
 
     response = await service.search(_request(use_reranker=True))
@@ -165,6 +168,10 @@ async def test_hybrid_search_reranks_rrf_top_k_and_preserves_all_scores() -> Non
     assert response.counts.bm25_candidate_count == 3
     assert response.counts.union_candidate_count == 4
     assert response.reranker_used is True
+    assert response.confidence.status is SearchConfidenceStatus.NOT_FLAGGED
+    assert response.confidence.score == pytest.approx(0.9)
+    assert response.confidence.threshold == pytest.approx(-4.0)
+    assert response.confidence.warning is None
 
 
 @pytest.mark.asyncio
@@ -174,6 +181,7 @@ async def test_hybrid_search_can_skip_reranker_and_keep_rrf_order() -> None:
     service = HybridSearchService(
         recall_service=recall,
         reranker_client=reranker,
+        reranker_low_confidence_threshold=-4.0,
     )
 
     response = await service.search(_request(use_reranker=False))
@@ -184,6 +192,44 @@ async def test_hybrid_search_can_skip_reranker_and_keep_rrf_order() -> None:
     assert all(item.rerank_score is None for item in response.results)
     assert response.reranker_used is False
     assert response.timings.rerank_ms == 0
+    assert response.confidence.status is SearchConfidenceStatus.UNASSESSED
+    assert response.confidence.score is None
+    assert response.confidence.warning is not None
+
+
+@pytest.mark.asyncio
+async def test_hybrid_search_warns_without_filtering_low_confidence_results() -> None:
+    recall = FakeRecallService()
+    reranker = FakeReranker(scores=(-6.0, -5.0, -7.0))
+    service = HybridSearchService(
+        recall_service=recall,
+        reranker_client=reranker,
+        reranker_low_confidence_threshold=-4.0,
+    )
+
+    response = await service.search(_request(use_reranker=True))
+
+    assert [item.chunk_id for item in response.results] == [30, 20]
+    assert response.confidence.status is SearchConfidenceStatus.LOW
+    assert response.confidence.score == pytest.approx(-5.0)
+    assert response.confidence.threshold == pytest.approx(-4.0)
+    assert response.confidence.warning is not None
+    assert "may be unreliable" in response.confidence.warning
+
+
+@pytest.mark.asyncio
+async def test_hybrid_search_does_not_warn_at_confidence_boundary() -> None:
+    service = HybridSearchService(
+        recall_service=FakeRecallService(),
+        reranker_client=FakeReranker(scores=(-5.0, -4.0, -6.0)),
+        reranker_low_confidence_threshold=-4.0,
+    )
+
+    response = await service.search(_request(use_reranker=True))
+
+    assert response.confidence.status is SearchConfidenceStatus.NOT_FLAGGED
+    assert response.confidence.score == pytest.approx(-4.0)
+    assert response.confidence.warning is None
 
 
 def test_search_request_rejects_inconsistent_candidate_limits() -> None:

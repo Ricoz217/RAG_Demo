@@ -168,6 +168,10 @@ OAuth2PasswordBearer 从请求头读取 Bearer Token。
             assert payload["effective_query"] == query
             assert payload["rewrite_enabled"] is False
             assert payload["rewrite"]["changed"] is False
+            assert payload["confidence"]["status"] == "not_flagged"
+            assert payload["confidence"]["score"] is not None
+            assert payload["confidence"]["threshold"] == -4.0
+            assert payload["confidence"]["warning"] is None
             assert payload["debug"]["dense"]
             assert payload["debug"]["bm25"]
             assert payload["debug"]["rrf"]

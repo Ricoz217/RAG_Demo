@@ -161,6 +161,11 @@ Doctor 会真实调用两个模型，而不只是检查端口。
   --no-rerank
 ```
 
+最终结果携带 `confidence`。默认使用 Top-1 Reranker 原始分数和
+`RERANKER_LOW_CONFIDENCE_THRESHOLD=-4.0` 做提醒：低于告警线时保留全部 Top-K，但 CLI 会提示
+结果可能不可信；关闭 Reranker 时状态为 `unassessed`。这个分数不是概率，告警线只适用于当前
+`bge-reranker-v2-m3` 与已验收语料，替换模型或语料后必须重新校准。
+
 切换为 exact 向量扫描：
 
 ```powershell
@@ -222,6 +227,8 @@ with RAG() as rag:
     for candidate in response.results:
         print(candidate.final_rank, candidate.source_path)
         print(candidate.content_raw)
+
+    print(response.confidence.status, response.confidence.warning)
 ```
 
 可直接运行完整示例：
@@ -294,7 +301,8 @@ Invoke-RestMethod `
 ```
 
 `POST /v1/search` 的 `rewrite` 默认是 `false`。响应同时返回 `query`、`effective_query`、
-`rewrite_enabled` 和 `rewrite` 详情，便于调用方保存实验条件，而不是只看到被改写后的字符串。
+`rewrite_enabled`、`rewrite` 和 `confidence` 详情，便于调用方保存实验条件，并在低可信时向最终用户
+展示警告，而不是把相对排名误当成可靠答案。
 
 摄取和 BM25 rebuild 必须携带：
 

@@ -25,7 +25,12 @@ from rag_demo.evaluation import (
 from rag_demo.ingest_service import IngestResult
 from rag_demo.migrations import apply_migrations
 from rag_demo.query_rewriter import QueryRewriteExperiment, QuerySearchResponse
-from rag_demo.search_service import SearchCandidate, SearchRequest, SearchResponse
+from rag_demo.search_service import (
+    SearchCandidate,
+    SearchConfidence,
+    SearchRequest,
+    SearchResponse,
+)
 
 app = typer.Typer(
     name="rag-demo",
@@ -609,6 +614,7 @@ def _print_search_response(response: SearchResponse, *, debug: bool) -> None:
             item.rerank_score if item.rerank_score is not None else item.rrf_score
         ),
     )
+    _print_confidence(response.confidence)
     if debug:
         _print_branch_results(
             "Dense Top-K",
@@ -650,6 +656,18 @@ def _print_search_response(response: SearchResponse, *, debug: bool) -> None:
                 score_getter=lambda item: item.rerank_score,
             )
     _print_timings(response)
+
+
+def _print_confidence(confidence: SearchConfidence) -> None:
+    if confidence.warning is None:
+        return
+    console.print(f"[yellow]WARNING: {confidence.warning}[/yellow]")
+    if confidence.score is not None:
+        console.print(
+            "Confidence evidence: "
+            f"top reranker score={confidence.score:.3f}, "
+            f"warning threshold={confidence.threshold:.3f}"
+        )
 
 
 def _print_rewrite_summary(execution: QuerySearchResponse) -> None:

@@ -1,8 +1,13 @@
+from io import StringIO
+
+import pytest
+from rich.console import Console
 from typer.testing import CliRunner
 
 from rag_demo import __version__
 from rag_demo.api import create_app
-from rag_demo.cli import app
+from rag_demo.cli import _print_confidence, app
+from rag_demo.search_service import SearchConfidence, SearchConfidenceStatus
 
 runner = CliRunner()
 
@@ -53,3 +58,25 @@ def test_cli_exposes_rewrite_effect_comparison_command() -> None:
 
     assert result.exit_code == 0
     assert "without Rewrite" in result.stdout
+
+
+def test_cli_prints_low_confidence_warning(monkeypatch: pytest.MonkeyPatch) -> None:
+    stream = StringIO()
+    monkeypatch.setattr(
+        "rag_demo.cli.console",
+        Console(file=stream, force_terminal=False, color_system=None),
+    )
+
+    _print_confidence(
+        SearchConfidence(
+            status=SearchConfidenceStatus.LOW,
+            score=-6.0,
+            threshold=-4.0,
+            warning="Top reranker score is low; results may be unreliable.",
+        )
+    )
+
+    output = stream.getvalue()
+    assert "WARNING" in output
+    assert "results may be unreliable" in output
+    assert "-6.000" in output

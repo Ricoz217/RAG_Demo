@@ -242,6 +242,7 @@ def _search_payload(execution: QuerySearchResponse, *, debug: bool) -> dict[str,
         "timings": asdict(response.timings),
         "counts": asdict(response.counts),
         "reranker_used": response.reranker_used,
+        "confidence": asdict(response.confidence),
     }
     if debug:
         payload["debug"] = {

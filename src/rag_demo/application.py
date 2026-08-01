@@ -254,6 +254,7 @@ class RAGApplication:
         self._search_service = HybridSearchService(
             recall_service=recall,
             reranker_client=self.reranker_client,
+            reranker_low_confidence_threshold=(self.settings.reranker_low_confidence_threshold),
         )
         return retriever
 

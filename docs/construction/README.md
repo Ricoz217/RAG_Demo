@@ -20,3 +20,4 @@
 | 5B | [摄取幂等键自动生成](phase-05b-automatic-idempotency-key.md) | 已完成 |
 | 6 | [确定性 Query Rewrite 与效果对比](phase-06-deterministic-query-rewrite.md) | 已完成 |
 | 7 | [同步与异步 Python SDK](phase-07-python-sdk.md) | 已完成 |
+| 8 | [低可信检索结果提醒](phase-08-low-confidence-warning.md) | 已完成 |

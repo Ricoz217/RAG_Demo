@@ -39,6 +39,7 @@ def test_settings_load_required_services_and_defaults(
     assert settings.embedding_timeout_seconds == 60.0
     assert settings.embedding_batch_size == 32
     assert settings.reranker_timeout_seconds == 60.0
+    assert settings.reranker_low_confidence_threshold == -4.0
     assert settings.chunk_target_chars == 1400
     assert settings.chunk_max_chars == 2200
     assert settings.chunk_overlap_chars == 200
@@ -71,6 +72,7 @@ def test_settings_repr_does_not_expose_secrets(
         ({"CHUNK_TARGET_CHARS": "2201"}, "chunk_target_chars"),
         ({"CHUNK_OVERLAP_CHARS": "1400"}, "chunk_overlap_chars"),
         ({"FINAL_TOP_K": "21"}, "final_top_k"),
+        ({"RERANKER_LOW_CONFIDENCE_THRESHOLD": "nan"}, "reranker_low_confidence_threshold"),
     ],
 )
 def test_settings_reject_invalid_numeric_relationships(
@@ -91,3 +93,14 @@ def test_settings_reject_non_postgresql_database_url(
 
     with pytest.raises(ValidationError, match="DATABASE_URL"):
         Settings()
+
+
+def test_settings_loads_custom_reranker_confidence_threshold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _set_required_environment(
+        monkeypatch,
+        {"RERANKER_LOW_CONFIDENCE_THRESHOLD": "-3.5"},
+    )
+
+    assert Settings().reranker_low_confidence_threshold == -3.5

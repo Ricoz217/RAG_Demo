@@ -7,6 +7,7 @@ import math
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
+from enum import StrEnum
 from typing import Any, Protocol
 
 from rag_demo.bm25_retriever import BM25SearchResponse
@@ -156,6 +157,24 @@ class SearchCandidateCounts:
     union_candidate_count: int
 
 
+class SearchConfidenceStatus(StrEnum):
+    """Whether final retrieval confidence was assessed and flagged."""
+
+    NOT_FLAGGED = "not_flagged"
+    LOW = "low"
+    UNASSESSED = "unassessed"
+
+
+@dataclass(frozen=True, slots=True)
+class SearchConfidence:
+    """Top-result confidence evidence without filtering retrieval results."""
+
+    status: SearchConfidenceStatus
+    score: float | None
+    threshold: float
+    warning: str | None
+
+
 @dataclass(frozen=True, slots=True)
 class SearchResponse:
     """Final results plus complete intermediate evidence."""
@@ -168,6 +187,7 @@ class SearchResponse:
     timings: SearchTimings
     counts: SearchCandidateCounts
     reranker_used: bool
+    confidence: SearchConfidence
 
 
 class HybridRecallService:
@@ -254,9 +274,13 @@ class HybridSearchService:
         *,
         recall_service: HybridRecallProvider,
         reranker_client: RerankerProvider | None,
+        reranker_low_confidence_threshold: float,
     ) -> None:
+        if not math.isfinite(reranker_low_confidence_threshold):
+            raise ValueError("reranker_low_confidence_threshold must be finite")
         self._recall_service = recall_service
         self._reranker_client = reranker_client
+        self._reranker_low_confidence_threshold = reranker_low_confidence_threshold
 
     async def search(self, request: SearchRequest) -> SearchResponse:
         """Execute the complete retrieval pipeline without answer generation."""
@@ -317,6 +341,11 @@ class HybridSearchService:
             replace(candidate, final_rank=rank)
             for rank, candidate in enumerate(final_base, start=1)
         )
+        confidence = _assess_confidence(
+            results,
+            reranker_used=reranker_used,
+            threshold=self._reranker_low_confidence_threshold,
+        )
         return SearchResponse(
             query=request.query,
             results=results,
@@ -337,7 +366,50 @@ class HybridSearchService:
                 union_candidate_count=recall.union_candidate_count,
             ),
             reranker_used=reranker_used,
+            confidence=confidence,
         )
+
+
+def _assess_confidence(
+    results: tuple[SearchCandidate, ...],
+    *,
+    reranker_used: bool,
+    threshold: float,
+) -> SearchConfidence:
+    if not reranker_used:
+        return SearchConfidence(
+            status=SearchConfidenceStatus.UNASSESSED,
+            score=None,
+            threshold=threshold,
+            warning="Reranker was disabled, so final-result confidence was not assessed.",
+        )
+    if not results:
+        return SearchConfidence(
+            status=SearchConfidenceStatus.UNASSESSED,
+            score=None,
+            threshold=threshold,
+            warning="No final result was available for confidence assessment.",
+        )
+
+    score = results[0].rerank_score
+    if score is None:
+        raise RuntimeError("reranked final result has no reranker score")
+    if score < threshold:
+        return SearchConfidence(
+            status=SearchConfidenceStatus.LOW,
+            score=score,
+            threshold=threshold,
+            warning=(
+                "Top reranker score is below the configured warning threshold; "
+                "results may be unreliable."
+            ),
+        )
+    return SearchConfidence(
+        status=SearchConfidenceStatus.NOT_FLAGGED,
+        score=score,
+        threshold=threshold,
+        warning=None,
+    )
 
 
 def _hydrate_fused_candidates(

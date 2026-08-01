@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     reranker_api_key: SecretStr
     reranker_model: str = Field(min_length=1)
     reranker_timeout_seconds: float = Field(default=60.0, gt=0)
+    reranker_low_confidence_threshold: float = Field(default=-4.0, allow_inf_nan=False)
 
     chunk_target_chars: int = Field(default=1400, gt=0)
     chunk_max_chars: int = Field(default=2200, gt=0)

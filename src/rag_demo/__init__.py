@@ -14,7 +14,13 @@ from rag_demo.sdk import (
     RAGSDKError,
     RAGSyncInAsyncContextError,
 )
-from rag_demo.search_service import SearchCandidate, SearchRequest, SearchResponse
+from rag_demo.search_service import (
+    SearchCandidate,
+    SearchConfidence,
+    SearchConfidenceStatus,
+    SearchRequest,
+    SearchResponse,
+)
 
 __version__ = "0.1.0"
 
@@ -32,6 +38,8 @@ __all__ = [
     "RAGSDKError",
     "RAGSyncInAsyncContextError",
     "SearchCandidate",
+    "SearchConfidence",
+    "SearchConfidenceStatus",
     "SearchRequest",
     "SearchResponse",
     "Settings",
