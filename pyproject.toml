@@ -41,6 +41,9 @@ dev = [
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+rag_demo = ["py.typed"]
+
 [tool.pytest.ini_options]
 addopts = "-ra --strict-config --strict-markers --cov=rag_demo --cov-report=term-missing"
 testpaths = ["tests"]

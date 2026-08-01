@@ -205,7 +205,54 @@ Query Rewrite 默认关闭。需要时可启用确定性的 NFKC、空白规范�
 .\.venv\Scripts\python.exe -m rag_demo benchmark --debug
 ```
 
-## 6. FastAPI REST
+## 6. Python SDK
+
+普通 Python 脚本使用同步门面；一个 `with` 块内的所有调用共享同一个数据库连接池、HTTP Client、
+BM25 generation 和私有事件循环：
+
+```python
+from rag_demo import RAG
+
+with RAG() as rag:
+    response = rag.search(
+        "FastAPI 如何接收 JSON 请求体？",
+        final_top_k=5,
+    )
+
+    for candidate in response.results:
+        print(candidate.final_rank, candidate.source_path)
+        print(candidate.content_raw)
+```
+
+可直接运行完整示例：
+
+```powershell
+.\.venv\Scripts\python.exe examples\python_sdk_demo.py
+```
+
+FastAPI、异步 Agent 和已有事件循环使用 `AsyncRAG`：
+
+```python
+from rag_demo import AsyncRAG
+
+async with AsyncRAG() as rag:
+    response = await rag.search("FastAPI 的依赖缓存如何工作？")
+```
+
+`search()` 返回现有强类型 `SearchResponse`。同步门面需要观察 Query Rewrite 时使用：
+
+```python
+with RAG() as rag:
+    execution = rag.search_query("如何声明请求体？", rewrite=True)
+    print(execution.rewrite.effective_query)
+    print(execution.response.results)
+```
+
+SDK 还提供 `ingest()`、`rebuild_bm25()`、`reload_bm25()`、`doctor()` 和
+`compare_rewrite()`。同步 `RAG` 不能在已运行的事件循环中使用，此时应选择 `AsyncRAG`。不要为每次
+查询创建一个引擎；常驻进程应在启动时创建一次，在关闭时释放。
+
+## 7. FastAPI REST
 
 启动：
 
@@ -258,7 +305,7 @@ Idempotency-Key: caller-generated-stable-key
 相同 Key + 相同请求返回首次结果；冲突或正在处理返回 HTTP 409。幂等状态保存在
 PostgreSQL，不依赖进程内缓存。
 
-## 7. 真实验收结果
+## 8. 真实验收结果
 
 FastAPI corpus：
 
@@ -302,7 +349,7 @@ Embedding HTTP requests: 0
 - HNSW 与 exact 在该小数据集上的 Recall/MRR 相同，平均 Dense 阶段耗时更低。
 - Reranker 将 Recall@10 从 0.9 提升到 1.0，并改变最终候选顺序。
 
-## 8. 工程检查
+## 9. 工程检查
 
 ```powershell
 .\.venv\Scripts\pytest.exe
@@ -314,16 +361,16 @@ Embedding HTTP requests: 0
 最终施工阶段运行结果：
 
 ```text
-109 tests passed
-coverage: 85.37%
-Ruff passed
+117 tests passed
+coverage: 85.50%
+SDK 相关文件 Ruff passed
 Mypy strict passed
 ```
 
 测试包含真实 PostgreSQL、pgvector、真实本地模型 smoke test、Mock HTTP 契约测试、HNSW
 `EXPLAIN (ANALYZE, BUFFERS)`、摄取并发、REST 幂等和 CLI/REST 顺序一致性。
 
-## 9. 项目结构
+## 10. 项目结构
 
 ```text
 migrations/                 PostgreSQL + pgvector migration
@@ -339,17 +386,19 @@ src/rag_demo/
   reranker_client.py        llama.cpp Reranker Client
   query_rewriter.py         确定性 Query Rewrite 与中性 A/B 差异
   search_service.py         并行召回与最终排名
+  sdk.py                    同步/异步 Python SDK 门面
   api.py                    FastAPI REST
   cli.py                    Typer CLI
   corpus.py                 FastAPI sparse clone
   evaluation.py             五路质量与延迟评测
 tests/                      unit + integration
+examples/python_sdk_demo.py 可直接运行的同步 SDK 演示
 data/evaluation_queries.json
 data/query_aliases.json
 docs/construction/          分阶段施工与验证记录
 ```
 
-## 10. 常见问题
+## 11. 常见问题
 
 `doctor` 显示 BM25 未就绪：
 
