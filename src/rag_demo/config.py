@@ -51,6 +51,7 @@ class Settings(BaseSettings):
     final_top_k: int = Field(default=5, gt=0)
     hnsw_ef_search: int = Field(default=100, gt=0)
     bm25_index_path: Path = Path("data/indexes/bm25")
+    query_aliases_path: Path = Path("data/query_aliases.json")
 
     @field_validator("database_url")
     @classmethod

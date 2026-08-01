@@ -164,10 +164,31 @@ OAuth2PasswordBearer 从请求头读取 Bearer Token。
             assert rest_search.status_code == 200, rest_search.text
             payload: dict[str, Any] = rest_search.json()
             assert payload["results"]
+            assert payload["query"] == query
+            assert payload["effective_query"] == query
+            assert payload["rewrite_enabled"] is False
+            assert payload["rewrite"]["changed"] is False
             assert payload["debug"]["dense"]
             assert payload["debug"]["bm25"]
             assert payload["debug"]["rrf"]
             assert payload["debug"]["reranker"]
+
+            rewritten_search = await client.post(
+                "/v1/search",
+                json={
+                    **search_body,
+                    "query": "如何声明请求体？",
+                    "rewrite": True,
+                },
+            )
+            assert rewritten_search.status_code == 200, rewritten_search.text
+            rewritten_payload: dict[str, Any] = rewritten_search.json()
+            assert rewritten_payload["query"] == "如何声明请求体？"
+            assert rewritten_payload["effective_query"] == "如何声明Request Body (请求体)?"
+            assert rewritten_payload["rewrite_enabled"] is True
+            assert "alias:请求体" in rewritten_payload["rewrite"]["applied_rules"]
+            assert rewritten_payload["rewrite"]["rewrite_ms"] >= 0
+            assert rewritten_payload["results"]
 
             original_write = bm25_module._write_generation
 

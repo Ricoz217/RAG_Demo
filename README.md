@@ -176,6 +176,28 @@ Doctor 会真实调用两个模型，而不只是检查端口。
   "OAuth2PasswordBearer 有什么作用？"
 ```
 
+Query Rewrite 默认关闭。需要时可启用确定性的 NFKC、空白规范化和别名扩展：
+
+```powershell
+.\.venv\Scripts\python.exe -m rag_demo search `
+  "如何声明请求体？" `
+  --rewrite `
+  --debug
+```
+
+别名字典保存在 `data/query_aliases.json`，扩展时同时保留规范词和原始别名，例如
+`请求体` 会成为 `Request Body (请求体)`。它不调用 LLM，也不保证检索结果更好。
+
+真实执行 Rewrite 关闭、开启两次检索，并中性展示 Final Top-K 的成员与排名差异：
+
+```powershell
+.\.venv\Scripts\python.exe -m rag_demo compare-rewrite `
+  "如何声明请求体？"
+```
+
+结果相同、变化或丢失原有候选都属于有效实验结论。该命令显示的是一次顺序执行的原始耗时，受冷启动与
+缓存影响，不应直接当作严谨的性能基准。
+
 输出小型五路评测：
 
 ```powershell
@@ -213,6 +235,7 @@ $body = @{
   bm25_top_k = 30
   rerank_top_k = 20
   final_top_k = 5
+  rewrite = $false
   debug = $true
 } | ConvertTo-Json
 
@@ -222,6 +245,9 @@ Invoke-RestMethod `
   -ContentType "application/json" `
   -Body $body
 ```
+
+`POST /v1/search` 的 `rewrite` 默认是 `false`。响应同时返回 `query`、`effective_query`、
+`rewrite_enabled` 和 `rewrite` 详情，便于调用方保存实验条件，而不是只看到被改写后的字符串。
 
 摄取和 BM25 rebuild 必须携带：
 
@@ -288,8 +314,8 @@ Embedding HTTP requests: 0
 最终施工阶段运行结果：
 
 ```text
-83 tests passed
-coverage > 80%
+109 tests passed
+coverage: 85.37%
 Ruff passed
 Mypy strict passed
 ```
@@ -311,6 +337,7 @@ src/rag_demo/
   bm25_retriever.py         jieba + bm25s generation
   rrf.py                    Reciprocal Rank Fusion
   reranker_client.py        llama.cpp Reranker Client
+  query_rewriter.py         确定性 Query Rewrite 与中性 A/B 差异
   search_service.py         并行召回与最终排名
   api.py                    FastAPI REST
   cli.py                    Typer CLI
@@ -318,6 +345,7 @@ src/rag_demo/
   evaluation.py             五路质量与延迟评测
 tests/                      unit + integration
 data/evaluation_queries.json
+data/query_aliases.json
 docs/construction/          分阶段施工与验证记录
 ```
 

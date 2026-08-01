@@ -21,7 +21,8 @@ from rag_demo.ingest_service import (
     IdempotencyConflictError,
     IdempotencyInProgressError,
 )
-from rag_demo.search_service import SearchRequest, SearchResponse
+from rag_demo.query_rewriter import QueryRewriteConfigurationError, QuerySearchResponse
+from rag_demo.search_service import SearchRequest
 
 
 class SearchBody(BaseModel):
@@ -35,6 +36,7 @@ class SearchBody(BaseModel):
     final_top_k: int | None = Field(default=None, gt=0)
     dense_mode: DenseSearchMode = DenseSearchMode.HNSW
     use_reranker: bool = True
+    rewrite: bool = False
     debug: bool = False
 
 
@@ -147,7 +149,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 use_reranker=body.use_reranker,
                 debug=body.debug,
             )
-            response = await application.search(core_request)
+            response = await application.search_query(core_request, rewrite=body.rewrite)
+        except QueryRewriteConfigurationError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except BM25IndexError as exc:
@@ -178,9 +182,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             language=body.language,
         )
         effective_key = (
-            ingestor.idempotency_key_for(source)
-            if idempotency_key is None
-            else idempotency_key
+            ingestor.idempotency_key_for(source) if idempotency_key is None else idempotency_key
         )
         try:
             result = await ingestor.ingest_path(
@@ -229,9 +231,13 @@ def _infer_source_root(source: Path) -> Path:
     return current
 
 
-def _search_payload(response: SearchResponse, *, debug: bool) -> dict[str, Any]:
+def _search_payload(execution: QuerySearchResponse, *, debug: bool) -> dict[str, Any]:
+    response = execution.response
     payload: dict[str, Any] = {
-        "query": response.query,
+        "query": execution.rewrite.original_query,
+        "effective_query": execution.rewrite.effective_query,
+        "rewrite_enabled": execution.rewrite_enabled,
+        "rewrite": execution.rewrite.to_json(),
         "results": [asdict(candidate) for candidate in response.results],
         "timings": asdict(response.timings),
         "counts": asdict(response.counts),

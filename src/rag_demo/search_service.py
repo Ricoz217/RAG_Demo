@@ -85,11 +85,11 @@ class SearchRequest:
     """Validated core search parameters shared by CLI and REST."""
 
     query: str
-    dense_top_k: int = 30
-    bm25_top_k: int = 30
-    rrf_rank_constant: int = 60
-    rerank_top_k: int = 20
-    final_top_k: int = 5
+    dense_top_k: int = 50  # 默认 ANN 取多少个
+    bm25_top_k: int = 50  # 默认 BM25 取多少个
+    rrf_rank_constant: int = 60  # rrf 常数
+    rerank_top_k: int = 20  # 默认对 top-k 进行 rerank
+    final_top_k: int = 5  # 最终返回的结果数量
     dense_mode: DenseSearchMode = DenseSearchMode.HNSW
     use_reranker: bool = True
     debug: bool = False
@@ -189,9 +189,12 @@ class HybridRecallService:
         dense_top_k: int,
         bm25_top_k: int,
         rank_constant: int,
-        dense_mode: DenseSearchMode = DenseSearchMode.HNSW,
+        dense_mode: DenseSearchMode = DenseSearchMode.HNSW,  # 生产环境这个参数不应该存在
     ) -> HybridRecallResponse:
-        """Return all branch rankings and their RRF union."""
+        """
+        Return all branch rankings and their RRF union.
+        召回，其实就是检索，只是少了个 reranker
+        """
         if not query.strip():
             raise ValueError("query must not be empty")
         if dense_top_k <= 0:
@@ -241,7 +244,10 @@ class HybridRecallService:
 
 
 class HybridSearchService:
-    """Run hybrid recall and optionally rerank the RRF candidate prefix."""
+    """
+    Run hybrid recall and optionally rerank the RRF candidate prefix.
+    大一统检索入口
+    """
 
     def __init__(
         self,
@@ -270,8 +276,10 @@ class HybridSearchService:
         if request.use_reranker and candidates:
             if self._reranker_client is None:
                 raise RuntimeError("reranker is enabled but no client is configured")
-            rerank_input = candidates[: request.rerank_top_k]
+            rerank_input = candidates[: request.rerank_top_k]  # 只取前几个，节约成本
             rerank_started = time.perf_counter()
+
+            # 说实话这里也有点屎，只返回了一个分数元组。虽然 index 没什么意义，但至少可以判断是第几个失败，然后针对性重试
             scores = await self._reranker_client.rerank(
                 request.query,
                 tuple(candidate.retrieval_text for candidate in rerank_input),
@@ -281,6 +289,8 @@ class HybridSearchService:
                 raise RuntimeError("reranker returned an unexpected score count")
             if not all(math.isfinite(score) for score in scores):
                 raise RuntimeError("reranker returned a non-finite score")
+
+            # 严重不合理，只作为 Demo，因为完全没管原始分数，Rerank直接出来了，也没有后续处理/校准
             reranked = tuple(
                 candidate
                 for _, candidate in sorted(
@@ -333,6 +343,14 @@ class HybridSearchService:
 def _hydrate_fused_candidates(
     recall: HybridRecallResponse,
 ) -> tuple[SearchCandidate, ...]:
+    """
+    并不合理，完全取决于 RRF_Rank，忽略了分数绝对值的意义
+    这里偷懒了
+    生产做法:
+    1. 扩大候选
+    2. 保留通道高分名额
+    3. 对原始分数进行标准化/归一/融合/加权，更高级的甚至可以用训练过的校准模型进行快速校准
+    """
     dense_by_id = {result.chunk_id: result for result in recall.dense.results}
     bm25_by_id = {result.chunk_id: result for result in recall.bm25.results}
     hydrated: list[SearchCandidate] = []

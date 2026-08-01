@@ -28,6 +28,13 @@ from rag_demo.ingest_service import (
     IdempotencyConflictError,
     IdempotencyInProgressError,
 )
+from rag_demo.query_rewriter import (
+    QueryRewriteExperiment,
+    QueryRewriter,
+    QueryRewriteResult,
+    QueryRewriteSearchService,
+    QuerySearchResponse,
+)
 from rag_demo.reranker_client import RerankerClient
 from rag_demo.search_service import (
     HybridRecallService,
@@ -76,6 +83,7 @@ class RAGApplication:
         self._bm25_manager: BM25IndexManager | None = None
         self._bm25_retriever: BM25Retriever | None = None
         self._search_service: HybridSearchService | None = None
+        self._query_rewrite_search_service: QueryRewriteSearchService | None = None
 
     async def open(self) -> None:
         """Open the database pool and reusable HTTP client once."""
@@ -122,6 +130,7 @@ class RAGApplication:
         database = self._database
         http_client = self._http_client
         self._search_service = None
+        self._query_rewrite_search_service = None
         self._bm25_retriever = None
         self._bm25_manager = None
         self._dense_service = None
@@ -253,6 +262,38 @@ class RAGApplication:
         if self._search_service is None:
             await self.load_bm25()
         return await self._required(self._search_service).search(request)
+
+    async def search_query(
+        self,
+        request: SearchRequest,
+        *,
+        rewrite: bool = False,
+    ) -> QuerySearchResponse:
+        """Optionally rewrite immediately before the unchanged retrieval pipeline."""
+        if not rewrite:
+            response = await self.search(request)
+            return QuerySearchResponse(
+                rewrite_enabled=False,
+                rewrite=QueryRewriteResult.disabled(request.query),
+                response=response,
+            )
+        return await self._rewrite_search_service().search(request, rewrite=True)
+
+    async def compare_query_rewrite(
+        self,
+        request: SearchRequest,
+    ) -> QueryRewriteExperiment:
+        """Run a neutral without/with Rewrite experiment for one query."""
+        return await self._rewrite_search_service().compare(request)
+
+    def _rewrite_search_service(self) -> QueryRewriteSearchService:
+        if self._query_rewrite_search_service is None:
+            rewriter = QueryRewriter.from_json(self.settings.query_aliases_path)
+            self._query_rewrite_search_service = QueryRewriteSearchService(
+                search_provider=self,
+                rewriter=rewriter,
+            )
+        return self._query_rewrite_search_service
 
     async def doctor(self) -> DoctorReport:
         """Exercise every configured local dependency without exposing secrets."""

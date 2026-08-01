@@ -33,9 +33,23 @@ def test_ingest_idempotency_key_is_optional_in_cli_help() -> None:
 def test_ingest_idempotency_key_is_optional_in_rest_schema() -> None:
     operation = create_app().openapi()["paths"]["/v1/ingest"]["post"]
     idempotency_parameter = next(
-        parameter
-        for parameter in operation["parameters"]
-        if parameter["name"] == "Idempotency-Key"
+        parameter for parameter in operation["parameters"] if parameter["name"] == "Idempotency-Key"
     )
 
     assert idempotency_parameter["required"] is False
+
+
+def test_search_exposes_opt_in_rewrite_in_cli_and_rest() -> None:
+    cli = runner.invoke(app, ["search", "--help"])
+    search_schema = create_app().openapi()["components"]["schemas"]["SearchBody"]
+
+    assert cli.exit_code == 0
+    assert "--rewrite" in cli.stdout
+    assert search_schema["properties"]["rewrite"]["default"] is False
+
+
+def test_cli_exposes_rewrite_effect_comparison_command() -> None:
+    result = runner.invoke(app, ["compare-rewrite", "--help"])
+
+    assert result.exit_code == 0
+    assert "without Rewrite" in result.stdout

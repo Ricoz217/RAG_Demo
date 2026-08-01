@@ -25,6 +25,8 @@ jieba.setLogLevel(logging.WARNING)
 
 _INDEX_FORMAT_VERSION = 1
 _TOKENIZER_VERSION = "jieba-search-code-v1"
+
+# 合法字符集，不要标点
 _SEGMENT_PATTERN = re.compile(
     r"[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)*"
     r"|[\u3400-\u4dbf\u4e00-\u9fff]+"
@@ -121,11 +123,11 @@ class _ScoredChunk:
 def tokenize_bm25(text: str) -> tuple[str, ...]:
     """Tokenize Chinese for search while preserving technical identifiers."""
     tokens: list[str] = []
-    for match in _SEGMENT_PATTERN.finditer(text):
+    for match in _SEGMENT_PATTERN.finditer(text):  # 这里实际上干了两件事，一是合规字符筛选，二是拆分了中文长段和英文单词(没走词典分)
         segment = match.group(0)
         if _is_chinese_segment(segment):
             tokens.extend(
-                token.strip() for token in jieba.lcut_for_search(segment) if token.strip()
+                token.strip() for token in jieba.lcut_for_search(segment) if token.strip()  # 使用 jieba 的搜索模式分词
             )
         else:
             tokens.append(segment.lower())
@@ -133,6 +135,7 @@ def tokenize_bm25(text: str) -> tuple[str, ...]:
 
 
 def _is_chinese_segment(segment: str) -> bool:
+    """用 unicode 判断中文字符"""
     first = ord(segment[0])
     return 0x3400 <= first <= 0x4DBF or 0x4E00 <= first <= 0x9FFF
 
@@ -199,6 +202,7 @@ class BM25IndexManager:
         )
 
     async def _read_corpus(self) -> tuple[Row, ...]:
+        """获取整个语料库的chunks"""
         async with self._database.connection() as connection:
             cursor = await connection.execute(
                 """
@@ -303,6 +307,7 @@ def _publish_generation(
     staging = generations_root / f".build-{uuid.uuid4().hex}"
     final = generations_root / generation
     staging.mkdir()
+    # 这里搞了半天其实就是原子替换落盘
 
     try:
         _write_generation(
@@ -327,11 +332,12 @@ def _write_generation(
     embedding_model: str,
     embedding_dimensions: int,
 ) -> None:
+    """这里计算了 BM25"""
     chunk_ids = tuple(int(row["chunk_id"]) for row in rows)
     tokenized_corpus = [list(tokenize_bm25(row["retrieval_text"])) for row in rows]
     index = bm25s.BM25(method="lucene")
-    index.index(tokenized_corpus, create_empty_token=True, show_progress=False)
-    index.save(str(directory), show_progress=False)
+    index.index(tokenized_corpus, create_empty_token=True, show_progress=False)  # 利用库快速创建 BM25 索引
+    index.save(str(directory), show_progress=False)  # 保存缓存
 
     manifest = {
         "format_version": _INDEX_FORMAT_VERSION,
@@ -410,6 +416,8 @@ def _retrieve_scores(
     tokens = tokenize_bm25(query)
     if not tokens or not chunk_ids:
         return ()
+
+    # 直接用三方库快速计算得分
     result = index.retrieve(
         [list(tokens)],
         corpus=list(chunk_ids),

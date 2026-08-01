@@ -1,4 +1,5 @@
 from collections.abc import Mapping
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -47,6 +48,7 @@ def test_settings_load_required_services_and_defaults(
     assert settings.rerank_top_k == 20
     assert settings.final_top_k == 5
     assert settings.hnsw_ef_search == 100
+    assert settings.query_aliases_path == Path("data/query_aliases.json")
 
 
 def test_settings_repr_does_not_expose_secrets(

@@ -46,11 +46,11 @@ def reciprocal_rank_fusion(
     if rank_constant <= 0:
         raise ValueError("rank_constant must be positive")
 
-    candidates: dict[int, _MutableFusedCandidate] = {}
-    next_seen = 0
+    candidates: dict[int, _MutableFusedCandidate] = {}  # 融合分暂存
+    next_seen = 0  # 用于解决同分时的排序问题
 
     for branch, ranking in (("dense", dense), ("bm25", bm25)):
-        seen_in_branch: set[int] = set()
+        seen_in_branch: set[int] = set()  # 防止同一个分支内重复计算
         for rank, candidate in enumerate(ranking, start=1):
             if candidate.chunk_id in seen_in_branch:
                 continue
@@ -65,7 +65,7 @@ def reciprocal_rank_fusion(
                 candidates[candidate.chunk_id] = fused
                 next_seen += 1
 
-            fused.rrf_score += 1 / (rank_constant + rank)
+            fused.rrf_score += 1 / (rank_constant + rank)  # 纳入分数
             if branch == "dense":
                 fused.dense_rank = rank
                 fused.dense_score = candidate.score

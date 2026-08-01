@@ -24,6 +24,7 @@ from rag_demo.evaluation import (
 )
 from rag_demo.ingest_service import IngestResult
 from rag_demo.migrations import apply_migrations
+from rag_demo.query_rewriter import QueryRewriteExperiment, QuerySearchResponse
 from rag_demo.search_service import SearchCandidate, SearchRequest, SearchResponse
 
 app = typer.Typer(
@@ -135,9 +136,7 @@ async def _ingest(
             language=language,
         )
         effective_key = (
-            ingestor.idempotency_key_for(source)
-            if idempotency_key is None
-            else idempotency_key
+            ingestor.idempotency_key_for(source) if idempotency_key is None else idempotency_key
         )
         result = await ingestor.ingest_path(
             source,
@@ -244,9 +243,7 @@ async def _ingest_fastapi(
             language=language,
         )
         effective_key = (
-            ingestor.idempotency_key_for(source)
-            if idempotency_key is None
-            else idempotency_key
+            ingestor.idempotency_key_for(source) if idempotency_key is None else idempotency_key
         )
         result = await ingestor.ingest_path(
             source,
@@ -396,6 +393,24 @@ async def _execute_search(
         return await application.search(request)
 
 
+async def _execute_query_search(
+    settings: Settings,
+    request: SearchRequest,
+    *,
+    rewrite: bool,
+) -> QuerySearchResponse:
+    async with RAGApplication(settings) as application:
+        return await application.search_query(request, rewrite=rewrite)
+
+
+async def _execute_rewrite_comparison(
+    settings: Settings,
+    request: SearchRequest,
+) -> QueryRewriteExperiment:
+    async with RAGApplication(settings) as application:
+        return await application.compare_query_rewrite(request)
+
+
 def _search_request(
     settings: Settings,
     *,
@@ -448,6 +463,13 @@ def search(
         bool,
         typer.Option("--rerank/--no-rerank", help="Enable Cross-Encoder reranking."),
     ] = True,
+    rewrite: Annotated[
+        bool,
+        typer.Option(
+            "--rewrite/--no-rewrite",
+            help="Apply deterministic normalization and alias expansion.",
+        ),
+    ] = False,
     debug: Annotated[
         bool,
         typer.Option(help="Display every intermediate ranking."),
@@ -466,8 +488,10 @@ def search(
         rerank=rerank,
         debug=debug,
     )
-    response = run_async(_execute_search(settings, request))
-    _print_search_response(response, debug=debug)
+    execution = run_async(_execute_query_search(settings, request, rewrite=rewrite))
+    if rewrite or debug:
+        _print_rewrite_summary(execution)
+    _print_search_response(execution.response, debug=debug)
 
 
 @app.command("compare")
@@ -528,6 +552,31 @@ def compare(
         score_getter=lambda item: item.rerank_score,
     )
     _print_timings(response)
+
+
+@app.command("compare-rewrite")
+def compare_rewrite(
+    query: Annotated[str, typer.Argument(help="Query used for both real retrieval runs.")],
+    rerank: Annotated[
+        bool,
+        typer.Option("--rerank/--no-rerank", help="Enable Cross-Encoder reranking."),
+    ] = True,
+) -> None:
+    """Compare final results with and without Rewrite; neither side is assumed better."""
+    settings = Settings()
+    request = _search_request(
+        settings,
+        query=query,
+        dense_top_k=None,
+        bm25_top_k=None,
+        rerank_top_k=None,
+        final_top_k=None,
+        dense_mode=DenseSearchMode.HNSW,
+        rerank=rerank,
+        debug=False,
+    )
+    experiment = run_async(_execute_rewrite_comparison(settings, request))
+    _print_rewrite_experiment(experiment)
 
 
 @app.command("serve")
@@ -601,6 +650,72 @@ def _print_search_response(response: SearchResponse, *, debug: bool) -> None:
                 score_getter=lambda item: item.rerank_score,
             )
     _print_timings(response)
+
+
+def _print_rewrite_summary(execution: QuerySearchResponse) -> None:
+    rewrite = execution.rewrite
+    console.print(f"Rewrite: {'enabled' if execution.rewrite_enabled else 'disabled'}")
+    console.print(f"Original query: {rewrite.original_query}")
+    console.print(f"Effective query: {rewrite.effective_query}")
+    console.print(f"Applied rules: {', '.join(rewrite.applied_rules) or '(none)'}")
+    console.print(f"Rewrite ms: {rewrite.rewrite_ms:.3f}")
+
+
+def _print_rewrite_experiment(experiment: QueryRewriteExperiment) -> None:
+    without = experiment.without_rewrite
+    with_ = experiment.with_rewrite
+    _print_rewrite_summary(with_)
+    _print_candidate_table(
+        "Final Top-K without Rewrite",
+        without.response.results,
+        score_name="Final score",
+        score_getter=_final_score,
+    )
+    _print_candidate_table(
+        "Final Top-K with Rewrite",
+        with_.response.results,
+        score_name="Final score",
+        score_getter=_final_score,
+    )
+
+    comparison = experiment.comparison
+    table = Table(title="Final Top-K membership and rank comparison")
+    table.add_column("Chunk")
+    table.add_column("Without", justify="right")
+    table.add_column("With", justify="right")
+    table.add_column("Rank delta", justify="right")
+    for change in comparison.rank_changes:
+        table.add_row(
+            str(change.chunk_id),
+            str(change.without_rank or "-"),
+            str(change.with_rank or "-"),
+            str(change.rank_delta) if change.rank_delta is not None else "-",
+        )
+    console.print(table)
+    console.print(f"Same final order: {'yes' if comparison.same_order else 'no'}")
+    console.print(
+        "Only without Rewrite: "
+        f"{', '.join(map(str, comparison.only_without_chunk_ids)) or '(none)'}"
+    )
+    console.print(
+        f"Only with Rewrite: {', '.join(map(str, comparison.only_with_chunk_ids)) or '(none)'}"
+    )
+
+    timings = Table(title="Rewrite experiment timings")
+    timings.add_column("Run")
+    timings.add_column("Milliseconds", justify="right")
+    timings.add_row("Without Rewrite search", f"{without.response.timings.total_ms:.2f}")
+    timings.add_row("Rewrite stage", f"{with_.rewrite.rewrite_ms:.3f}")
+    timings.add_row("With Rewrite search", f"{with_.response.timings.total_ms:.2f}")
+    timings.add_row(
+        "With Rewrite total",
+        f"{with_.rewrite.rewrite_ms + with_.response.timings.total_ms:.2f}",
+    )
+    console.print(timings)
+
+
+def _final_score(candidate: SearchCandidate) -> float:
+    return candidate.rerank_score if candidate.rerank_score is not None else candidate.rrf_score
 
 
 def _print_candidate_table(

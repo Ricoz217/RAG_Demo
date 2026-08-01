@@ -100,6 +100,8 @@ class RerankerClient:
         *,
         expected_count: int,
     ) -> tuple[float, ...]:
+        """看一下结果数量对不对，看一下结果的 index 和 relevance_score 对不对"""
+
         if not isinstance(payload, dict) or not isinstance(payload.get("results"), list):
             raise RerankerClientError("reranker response must contain a results list")
 
