@@ -4,25 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from rag_demo.models.retrieval import FusedCandidate, ScoredCandidate
 
-@dataclass(frozen=True, slots=True)
-class ScoredCandidate:
-    """One branch-specific ranked candidate."""
-
-    chunk_id: int
-    score: float
-
-
-@dataclass(frozen=True, slots=True)
-class FusedCandidate:
-    """One union candidate with branch evidence and an RRF score."""
-
-    chunk_id: int
-    dense_rank: int | None
-    dense_score: float | None
-    bm25_rank: int | None
-    bm25_score: float | None
-    rrf_score: float
+__all__ = ["FusedCandidate", "ScoredCandidate", "reciprocal_rank_fusion"]
 
 
 @dataclass(slots=True)

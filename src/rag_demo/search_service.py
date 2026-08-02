@@ -5,14 +5,42 @@ from __future__ import annotations
 import asyncio
 import math
 import time
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, replace
-from enum import StrEnum
-from typing import Any, Protocol
+from collections.abc import Sequence
+from dataclasses import replace
+from typing import Protocol
 
-from rag_demo.bm25_retriever import BM25SearchResponse
-from rag_demo.dense_retriever import DenseQueryResponse, DenseSearchMode
-from rag_demo.rrf import FusedCandidate, ScoredCandidate, reciprocal_rank_fusion
+from rag_demo.models.retrieval import (
+    BM25SearchResponse,
+    DenseQueryResponse,
+    DenseSearchMode,
+    HybridRecallResponse,
+    ScoredCandidate,
+    SearchCandidate,
+    SearchCandidateCounts,
+    SearchConfidence,
+    SearchConfidenceStatus,
+    SearchRequest,
+    SearchResponse,
+    SearchTimings,
+)
+from rag_demo.rrf import reciprocal_rank_fusion
+
+__all__ = [
+    "BM25QueryProvider",
+    "DenseQueryProvider",
+    "HybridRecallProvider",
+    "HybridRecallResponse",
+    "HybridRecallService",
+    "HybridSearchService",
+    "RerankerProvider",
+    "SearchCandidate",
+    "SearchCandidateCounts",
+    "SearchConfidence",
+    "SearchConfidenceStatus",
+    "SearchRequest",
+    "SearchResponse",
+    "SearchTimings",
+]
 
 
 class DenseQueryProvider(Protocol):
@@ -50,22 +78,6 @@ class RerankerProvider(Protocol):
         """Return scores aligned with the input documents."""
 
 
-@dataclass(frozen=True, slots=True)
-class HybridRecallResponse:
-    """Dense, BM25, and RRF stages retained for debug output."""
-
-    query: str
-    dense: DenseQueryResponse
-    bm25: BM25SearchResponse
-    fused: tuple[FusedCandidate, ...]
-    rrf_ms: float
-    total_ms: float
-
-    @property
-    def union_candidate_count(self) -> int:
-        return len(self.fused)
-
-
 class HybridRecallProvider(Protocol):
     """Hybrid recall behavior consumed by final search."""
 
@@ -79,115 +91,6 @@ class HybridRecallProvider(Protocol):
         dense_mode: DenseSearchMode,
     ) -> HybridRecallResponse:
         """Return observable Dense, BM25, and RRF stages."""
-
-
-@dataclass(frozen=True, slots=True)
-class SearchRequest:
-    """Validated core search parameters shared by CLI and REST."""
-
-    query: str
-    dense_top_k: int = 50  # 默认 ANN 取多少个
-    bm25_top_k: int = 50  # 默认 BM25 取多少个
-    rrf_rank_constant: int = 60  # rrf 常数
-    rerank_top_k: int = 20  # 默认对 top-k 进行 rerank
-    final_top_k: int = 5  # 最终返回的结果数量
-    dense_mode: DenseSearchMode = DenseSearchMode.HNSW
-    use_reranker: bool = True
-    debug: bool = False
-
-    def __post_init__(self) -> None:
-        if not self.query.strip():
-            raise ValueError("query must not be empty")
-        for name, value in (
-            ("dense_top_k", self.dense_top_k),
-            ("bm25_top_k", self.bm25_top_k),
-            ("rrf_rank_constant", self.rrf_rank_constant),
-            ("rerank_top_k", self.rerank_top_k),
-            ("final_top_k", self.final_top_k),
-        ):
-            if value <= 0:
-                raise ValueError(f"{name} must be positive")
-        if self.final_top_k > self.rerank_top_k:
-            raise ValueError("final_top_k must not exceed rerank_top_k")
-
-
-@dataclass(frozen=True, slots=True)
-class SearchCandidate:
-    """Hydrated candidate retaining every ranking stage."""
-
-    chunk_id: int
-    document_id: int
-    title: str | None
-    source_repo: str
-    source_commit: str
-    source_path: str
-    language: str
-    heading_path: tuple[str, ...]
-    content_raw: str
-    retrieval_text: str
-    metadata: Mapping[str, Any]
-    dense_rank: int | None
-    dense_score: float | None
-    bm25_rank: int | None
-    bm25_score: float | None
-    rrf_rank: int
-    rrf_score: float
-    rerank_score: float | None
-    final_rank: int | None
-
-
-@dataclass(frozen=True, slots=True)
-class SearchTimings:
-    """Per-stage search latency in milliseconds."""
-
-    query_embedding_ms: float
-    dense_search_ms: float
-    bm25_search_ms: float
-    rrf_ms: float
-    rerank_ms: float
-    total_ms: float
-
-
-@dataclass(frozen=True, slots=True)
-class SearchCandidateCounts:
-    """Candidate counts at branch and union boundaries."""
-
-    dense_candidate_count: int
-    bm25_candidate_count: int
-    union_candidate_count: int
-
-
-class SearchConfidenceStatus(StrEnum):
-    """Whether final retrieval confidence was assessed and flagged."""
-
-    NOT_FLAGGED = "not_flagged"
-    LOW = "low"
-    UNASSESSED = "unassessed"
-
-
-@dataclass(frozen=True, slots=True)
-class SearchConfidence:
-    """Top-result confidence evidence without filtering retrieval results."""
-
-    status: SearchConfidenceStatus
-    score: float | None
-    threshold: float
-    warning: str | None
-
-
-@dataclass(frozen=True, slots=True)
-class SearchResponse:
-    """Final results plus complete intermediate evidence."""
-
-    query: str
-    results: tuple[SearchCandidate, ...]
-    reranked: tuple[SearchCandidate, ...]
-    fused_candidates: tuple[SearchCandidate, ...]
-    recall: HybridRecallResponse
-    timings: SearchTimings
-    counts: SearchCandidateCounts
-    reranker_used: bool
-    confidence: SearchConfidence
 
 
 class HybridRecallService:
@@ -303,7 +206,7 @@ class HybridSearchService:
             rerank_input = candidates[: request.rerank_top_k]  # 只取前几个，节约成本
             rerank_started = time.perf_counter()
 
-            # 说实话这里也有点屎，只返回了一个分数元组。虽然 index 没什么意义，但至少可以判断是第几个失败，然后针对性重试
+            # 这里只返回分数元组；索引至少可以定位第几个结果失败，以便针对性重试。
             scores = await self._reranker_client.rerank(
                 request.query,
                 tuple(candidate.retrieval_text for candidate in rerank_input),

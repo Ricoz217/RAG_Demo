@@ -11,8 +11,8 @@ import re
 import shutil
 import time
 import uuid
-from collections.abc import Mapping, Sequence
-from dataclasses import asdict, dataclass
+from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +20,25 @@ import bm25s  # type: ignore[import-untyped]
 import jieba  # type: ignore[import-untyped]
 
 from rag_demo.db import Database, Row
+from rag_demo.models.retrieval import (
+    BM25BuildResult,
+    BM25IndexError,
+    BM25SearchResponse,
+    BM25SearchResult,
+)
+
+__all__ = [
+    "BM25BuildResult",
+    "BM25IndexCompatibilityError",
+    "BM25IndexError",
+    "BM25IndexManager",
+    "BM25IndexNotFoundError",
+    "BM25Retriever",
+    "BM25SearchResponse",
+    "BM25SearchResult",
+    "EmptyBM25CorpusError",
+    "tokenize_bm25",
+]
 
 jieba.setLogLevel(logging.WARNING)
 
@@ -34,10 +53,6 @@ _SEGMENT_PATTERN = re.compile(
 )
 
 
-class BM25IndexError(RuntimeError):
-    """Base class for local BM25 index failures."""
-
-
 class BM25IndexNotFoundError(BM25IndexError):
     """Raised when no published BM25 generation exists."""
 
@@ -48,62 +63,6 @@ class BM25IndexCompatibilityError(BM25IndexError):
 
 class EmptyBM25CorpusError(BM25IndexError):
     """Raised when PostgreSQL has no matching Chunks to index."""
-
-
-@dataclass(frozen=True, slots=True)
-class BM25BuildResult:
-    """Observable result from a full index rebuild."""
-
-    generation: str
-    chunk_count: int
-    build_ms: float
-
-    def to_json(self) -> dict[str, str | int | float]:
-        return asdict(self)
-
-    @classmethod
-    def from_json(cls, value: Any) -> BM25BuildResult:
-        if not isinstance(value, dict):
-            raise BM25IndexError("stored BM25 rebuild result is not an object")
-        try:
-            return cls(
-                generation=str(value["generation"]),
-                chunk_count=int(value["chunk_count"]),
-                build_ms=float(value["build_ms"]),
-            )
-        except (KeyError, TypeError, ValueError) as exc:
-            raise BM25IndexError("stored BM25 rebuild result is invalid") from exc
-
-
-@dataclass(frozen=True, slots=True)
-class BM25SearchResult:
-    """One BM25-ranked Chunk with PostgreSQL source metadata."""
-
-    rank: int
-    chunk_id: int
-    document_id: int
-    title: str | None
-    source_repo: str
-    source_commit: str
-    source_path: str
-    language: str
-    heading_path: tuple[str, ...]
-    content_raw: str
-    retrieval_text: str
-    metadata: Mapping[str, Any]
-    score: float
-
-
-@dataclass(frozen=True, slots=True)
-class BM25SearchResponse:
-    """Observable output from one BM25 query."""
-
-    results: tuple[BM25SearchResult, ...]
-    search_ms: float
-
-    @property
-    def candidate_count(self) -> int:
-        return len(self.results)
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,11 +82,15 @@ class _ScoredChunk:
 def tokenize_bm25(text: str) -> tuple[str, ...]:
     """Tokenize Chinese for search while preserving technical identifiers."""
     tokens: list[str] = []
-    for match in _SEGMENT_PATTERN.finditer(text):  # 这里实际上干了两件事，一是合规字符筛选，二是拆分了中文长段和英文单词(没走词典分)
+    # 这里实际上干了两件事：合规字符筛选，以及拆分中文长段和英文单词（没走词典分）。
+    for match in _SEGMENT_PATTERN.finditer(text):
         segment = match.group(0)
         if _is_chinese_segment(segment):
+            # 使用 jieba 的搜索模式分词。
             tokens.extend(
-                token.strip() for token in jieba.lcut_for_search(segment) if token.strip()  # 使用 jieba 的搜索模式分词
+                token.strip()
+                for token in jieba.lcut_for_search(segment)
+                if token.strip()
             )
         else:
             tokens.append(segment.lower())
@@ -336,7 +299,8 @@ def _write_generation(
     chunk_ids = tuple(int(row["chunk_id"]) for row in rows)
     tokenized_corpus = [list(tokenize_bm25(row["retrieval_text"])) for row in rows]
     index = bm25s.BM25(method="lucene")
-    index.index(tokenized_corpus, create_empty_token=True, show_progress=False)  # 利用库快速创建 BM25 索引
+    # 利用库快速创建 BM25 索引。
+    index.index(tokenized_corpus, create_empty_token=True, show_progress=False)
     index.save(str(directory), show_progress=False)  # 保存缓存
 
     manifest = {

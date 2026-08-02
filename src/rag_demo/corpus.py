@@ -4,8 +4,19 @@ from __future__ import annotations
 
 import asyncio
 import subprocess
-from dataclasses import dataclass
 from pathlib import Path
+
+from rag_demo.models.operations import CorpusInfo
+
+__all__ = [
+    "CorpusGitError",
+    "CorpusInfo",
+    "FASTAPI_REPOSITORY_URL",
+    "FASTAPI_SPARSE_PATHS",
+    "download_corpus",
+    "download_fastapi",
+    "inspect_corpus",
+]
 
 FASTAPI_REPOSITORY_URL = "https://github.com/fastapi/fastapi.git"
 FASTAPI_SPARSE_PATHS = ("docs/zh/docs", "docs/en/docs")
@@ -13,22 +24,6 @@ FASTAPI_SPARSE_PATHS = ("docs/zh/docs", "docs/en/docs")
 
 class CorpusGitError(RuntimeError):
     """Raised when a corpus Git operation fails."""
-
-
-@dataclass(frozen=True, slots=True)
-class CorpusInfo:
-    """Observable Git and Markdown facts for one corpus checkout."""
-
-    path: Path
-    repository_url: str
-    commit: str
-    zh_markdown_count: int
-    en_markdown_count: int
-
-    def source_directory(self, language: str) -> Path:
-        if language not in {"zh", "en"}:
-            raise ValueError("FastAPI corpus language must be 'zh' or 'en'")
-        return self.path / "docs" / language / "docs"
 
 
 async def download_fastapi(

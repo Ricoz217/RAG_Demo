@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import json
 import sys
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Self
 
@@ -13,7 +12,6 @@ import httpx
 from psycopg.types.json import Jsonb
 
 from rag_demo.bm25_retriever import (
-    BM25BuildResult,
     BM25IndexError,
     BM25IndexManager,
     BM25Retriever,
@@ -28,44 +26,28 @@ from rag_demo.ingest_service import (
     IdempotencyConflictError,
     IdempotencyInProgressError,
 )
-from rag_demo.query_rewriter import (
+from rag_demo.models.operations import DoctorCheck, DoctorReport
+from rag_demo.models.retrieval import BM25BuildResult, SearchRequest, SearchResponse
+from rag_demo.models.rewrite import (
     QueryRewriteExperiment,
-    QueryRewriter,
     QueryRewriteResult,
-    QueryRewriteSearchService,
     QuerySearchResponse,
+)
+from rag_demo.query_rewriter import (
+    QueryRewriter,
+    QueryRewriteSearchService,
 )
 from rag_demo.reranker_client import RerankerClient
 from rag_demo.search_service import (
     HybridRecallService,
     HybridSearchService,
-    SearchRequest,
-    SearchResponse,
 )
+
+__all__ = ["ApplicationNotStartedError", "DoctorCheck", "DoctorReport", "RAGApplication"]
 
 
 class ApplicationNotStartedError(RuntimeError):
     """Raised when a managed resource is accessed outside its lifecycle."""
-
-
-@dataclass(frozen=True, slots=True)
-class DoctorCheck:
-    """One observable infrastructure check."""
-
-    name: str
-    passed: bool
-    detail: str
-
-
-@dataclass(frozen=True, slots=True)
-class DoctorReport:
-    """Complete infrastructure readiness report."""
-
-    checks: tuple[DoctorCheck, ...]
-
-    @property
-    def passed(self) -> bool:
-        return all(check.passed for check in self.checks)
 
 
 class RAGApplication:

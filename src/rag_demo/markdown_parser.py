@@ -4,44 +4,15 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Mapping
-from dataclasses import dataclass
-from enum import StrEnum
 from pathlib import Path
 
 import frontmatter
 from markdown_it import MarkdownIt
 from markdown_it.token import Token
 
+from rag_demo.models.document import BlockKind, ParsedBlock, ParsedMarkdownDocument
 
-class BlockKind(StrEnum):
-    """Markdown block categories relevant to chunking."""
-
-    PARAGRAPH = "paragraph"
-    LIST = "list"
-    CODE = "code"
-
-
-@dataclass(frozen=True, slots=True)
-class ParsedBlock:
-    """One source-preserving Markdown block under a heading path."""
-
-    kind: BlockKind
-    text: str
-    heading_path: tuple[str, ...]
-    section_root: str
-
-
-@dataclass(frozen=True, slots=True)
-class ParsedMarkdownDocument:
-    """Normalized Markdown structure before chunking."""
-
-    title: str | None
-    first_h1: str | None
-    frontmatter: Mapping[str, object]
-    source_path: Path
-    content_hash: str
-    blocks: tuple[ParsedBlock, ...]
-
+__all__ = ["BlockKind", "ParsedBlock", "ParsedMarkdownDocument", "parse_markdown"]
 
 _MARKDOWN = MarkdownIt("commonmark")
 _CONTAINER_BLOCKS = {

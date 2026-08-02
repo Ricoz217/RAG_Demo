@@ -16,13 +16,12 @@ from pydantic import BaseModel, Field
 from rag_demo.application import RAGApplication
 from rag_demo.bm25_retriever import BM25IndexError
 from rag_demo.config import Settings
-from rag_demo.dense_retriever import DenseSearchMode
 from rag_demo.ingest_service import (
     IdempotencyConflictError,
     IdempotencyInProgressError,
 )
-from rag_demo.query_rewriter import QueryRewriteConfigurationError, QuerySearchResponse
-from rag_demo.search_service import SearchRequest
+from rag_demo.models import DenseSearchMode, QuerySearchResponse, SearchRequest
+from rag_demo.query_rewriter import QueryRewriteConfigurationError
 
 
 class SearchBody(BaseModel):

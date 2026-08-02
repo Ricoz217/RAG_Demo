@@ -3,25 +3,13 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
 from itertools import groupby
 
-from rag_demo.markdown_parser import ParsedBlock, ParsedMarkdownDocument
+from rag_demo.models.document import Chunk, ParsedBlock, ParsedMarkdownDocument
+
+__all__ = ["CHUNKER_VERSION", "Chunk", "MarkdownChunker"]
 
 CHUNKER_VERSION = "markdown-structure-v2"
-
-
-@dataclass(frozen=True, slots=True)
-class Chunk:
-    """One retrieval unit derived from a Markdown document."""
-
-    chunk_index: int
-    chunker_version: str
-    heading_path: tuple[str, ...]
-    content_raw: str
-    retrieval_text: str
-    char_count: int
-    content_hash: str
 
 
 class MarkdownChunker:  # 惰性拆分，用的时候才拆一次，不保存
@@ -67,7 +55,8 @@ class MarkdownChunker:  # 惰性拆分，用的时候才拆一次，不保存
             document.blocks,
             key=_section_key,
         ):
-            section_texts = self._chunk_section(tuple(section_blocks))  # 将同一段尽量拆分，同时防止与其他段乱串掉
+            # 将同一段尽量拆分，同时防止与其他段乱串掉。
+            section_texts = self._chunk_section(tuple(section_blocks))
             raw_chunks.extend((heading_path, text) for text in section_texts)
 
         return tuple(
@@ -93,7 +82,8 @@ class MarkdownChunker:  # 惰性拆分，用的时候才拆一次，不保存
                 continue
 
             candidate = f"{current}\n\n{text}"
-            if len(current) < self._target_chars and len(candidate) <= self._max_chars:  # 字数太少，不够，继续合并
+            # 字数太少，不够，继续合并。
+            if len(current) < self._target_chars and len(candidate) <= self._max_chars:
                 current = candidate
                 continue
 

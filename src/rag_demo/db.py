@@ -5,7 +5,6 @@ from __future__ import annotations
 import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
 from typing import Any, Self
 
 from pgvector.psycopg import register_vector_async
@@ -13,30 +12,15 @@ from psycopg import AsyncConnection
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
+from rag_demo.models.operations import DatabaseStatus
+
 Row = dict[str, Any]
+
+__all__ = ["Database", "DatabaseStatus", "Row"]
 
 
 async def _configure_connection(connection: AsyncConnection[Any]) -> None:
     await register_vector_async(connection)
-
-
-@dataclass(frozen=True, slots=True)
-class DatabaseStatus:
-    """Observable database facts used by CLI and health checks."""
-
-    current_user: str
-    current_database: str
-    server_version: str
-    vector_version: str
-    embedding_dimensions: int
-    hnsw_index_present: bool
-    document_count: int
-    chunk_count: int
-    applied_migrations: tuple[str, ...]
-
-    @property
-    def embedding_column_type(self) -> str:
-        return f"vector({self.embedding_dimensions})"
 
 
 class Database:

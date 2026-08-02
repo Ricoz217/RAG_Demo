@@ -10,22 +10,26 @@ from rich.console import Console
 from rich.table import Table
 
 from rag_demo import __version__
-from rag_demo.application import DoctorReport, RAGApplication
+from rag_demo.application import RAGApplication
 from rag_demo.asyncio_compat import run_async
 from rag_demo.config import Settings
-from rag_demo.corpus import CorpusInfo, download_fastapi, inspect_corpus
-from rag_demo.db import Database, DatabaseStatus
-from rag_demo.dense_retriever import DenseSearchMode
+from rag_demo.corpus import download_fastapi, inspect_corpus
+from rag_demo.db import Database
 from rag_demo.evaluation import (
-    BenchmarkReport,
     BenchmarkService,
-    EvaluationMethod,
     load_evaluation_queries,
 )
-from rag_demo.ingest_service import IngestResult
 from rag_demo.migrations import apply_migrations
-from rag_demo.query_rewriter import QueryRewriteExperiment, QuerySearchResponse
-from rag_demo.search_service import (
+from rag_demo.models import (
+    BenchmarkReport,
+    CorpusInfo,
+    DatabaseStatus,
+    DenseSearchMode,
+    DoctorReport,
+    EvaluationMethod,
+    IngestResult,
+    QueryRewriteExperiment,
+    QuerySearchResponse,
     SearchCandidate,
     SearchConfidence,
     SearchRequest,

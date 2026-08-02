@@ -8,18 +8,28 @@ import json
 import math
 import time
 from collections.abc import Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Protocol
 
 import numpy as np
 from psycopg import AsyncConnection
 from psycopg.types.json import Jsonb
 
-from rag_demo.chunker import Chunk, MarkdownChunker
+from rag_demo.chunker import MarkdownChunker
 from rag_demo.db import Database, Row
 from rag_demo.embedding_client import EmbeddingVector
 from rag_demo.markdown_parser import parse_markdown
+from rag_demo.models.document import Chunk
+from rag_demo.models.ingestion import IngestResult
+
+__all__ = [
+    "DocumentIngestor",
+    "EmbeddingProvider",
+    "IdempotencyConflictError",
+    "IdempotencyInProgressError",
+    "IngestResult",
+]
 
 
 class IdempotencyConflictError(RuntimeError):
@@ -43,31 +53,6 @@ class EmbeddingProvider(Protocol):
     def batch_size(self) -> int: ...
 
     async def embed(self, texts: Sequence[str]) -> tuple[EmbeddingVector, ...]: ...
-
-
-@dataclass(frozen=True, slots=True)
-class IngestResult:
-    """Observable counts and timings for one idempotent ingestion request."""
-
-    document_count: int
-    chunk_count: int
-    embedded_chunk_count: int
-    skipped_embedding_count: int
-    deleted_chunk_count: int
-    embedding_http_request_count: int
-    parse_ms: float
-    embedding_ms: float
-    database_insert_ms: float
-    total_ms: float
-
-    def to_json(self) -> dict[str, int | float]:
-        return asdict(self)
-
-    @classmethod
-    def from_json(cls, value: Any) -> IngestResult:
-        if not isinstance(value, dict):
-            raise RuntimeError("stored ingestion result is not an object")
-        return cls(**value)
 
 
 @dataclass(frozen=True, slots=True)

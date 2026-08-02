@@ -393,6 +393,13 @@ Mypy strict passed
 ```text
 migrations/                 PostgreSQL + pgvector migration
 src/rag_demo/
+  models/                   按领域集中管理公共数据契约
+    document.py             Markdown、Block 与 Chunk
+    retrieval.py            Dense、BM25、RRF 与最终搜索结果
+    ingestion.py            摄取结果
+    rewrite.py              Query Rewrite 与效果对比结果
+    operations.py           数据库、Doctor 与语料操作结果
+    evaluation.py           Benchmark 查询、命中与指标
   application.py            共享资源生命周期与对象组装
   markdown_parser.py        Markdown 结构解析
   chunker.py                Heading-aware Chunk

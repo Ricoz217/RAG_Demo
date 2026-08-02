@@ -4,89 +4,32 @@ from __future__ import annotations
 
 import math
 import time
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
-from enum import StrEnum
-from typing import Any, Protocol
+from collections.abc import Sequence
+from typing import Protocol
 
 import numpy as np
 from psycopg import AsyncConnection
 
 from rag_demo.db import Database, Row
 from rag_demo.embedding_client import EmbeddingVector
+from rag_demo.models.retrieval import (
+    DenseQueryPlan,
+    DenseQueryResponse,
+    DenseRetrievalResponse,
+    DenseSearchMode,
+    DenseSearchResult,
+)
 
-
-class DenseSearchMode(StrEnum):
-    """Supported pgvector execution modes."""
-
-    EXACT = "exact"
-    HNSW = "hnsw"
-
-
-@dataclass(frozen=True, slots=True)
-class DenseSearchResult:
-    """One ranked Chunk returned by pgvector."""
-
-    rank: int
-    chunk_id: int
-    document_id: int
-    title: str | None
-    source_repo: str
-    source_commit: str
-    source_path: str
-    language: str
-    heading_path: tuple[str, ...]
-    content_raw: str
-    retrieval_text: str
-    metadata: Mapping[str, Any]
-    cosine_distance: float
-    cosine_similarity: float
-
-
-@dataclass(frozen=True, slots=True)
-class DenseRetrievalResponse:
-    """Observable output from the database retrieval stage."""
-
-    mode: DenseSearchMode
-    results: tuple[DenseSearchResult, ...]
-    search_ms: float
-
-    @property
-    def candidate_count(self) -> int:
-        return len(self.results)
-
-
-@dataclass(frozen=True, slots=True)
-class DenseQueryPlan:
-    """PostgreSQL execution plan evidence for one dense mode."""
-
-    mode: DenseSearchMode
-    lines: tuple[str, ...]
-    ef_search: int | None
-
-    @property
-    def text(self) -> str:
-        return "\n".join(self.lines)
-
-    @property
-    def uses_hnsw(self) -> bool:
-        return "chunks_embedding_hnsw" in self.text
-
-
-@dataclass(frozen=True, slots=True)
-class DenseQueryResponse:
-    """Dense query output including embedding and retrieval timings."""
-
-    query: str
-    mode: DenseSearchMode
-    results: tuple[DenseSearchResult, ...]
-    query_embedding_ms: float
-    dense_search_ms: float
-    total_ms: float
-
-    @property
-    def candidate_count(self) -> int:
-        return len(self.results)
+__all__ = [
+    "DenseQueryPlan",
+    "DenseQueryResponse",
+    "DenseQueryService",
+    "DenseRetrievalResponse",
+    "DenseRetriever",
+    "DenseSearchMode",
+    "DenseSearchResult",
+    "QueryEmbeddingProvider",
+]
 
 
 class QueryEmbeddingProvider(Protocol):
@@ -223,7 +166,8 @@ class DenseRetriever:
         self._validate_top_k(top_k)
 
         async with self._database.connection() as connection:
-            await self._configure_mode(connection, mode)  # 手动切换是否使用 HNSW，只在 Demo 使用，生产绝对不需要，因为 PG 本身自带自动选择模式的 Planner
+            # Demo 手动切换是否使用 HNSW；生产交给 PostgreSQL Planner 自动选择。
+            await self._configure_mode(connection, mode)
             cursor = await connection.execute(
                 f"EXPLAIN (ANALYZE, BUFFERS, FORMAT TEXT) {_DENSE_SQL}",
                 self._query_parameters(vector, top_k),

@@ -22,3 +22,4 @@
 | 7 | [同步与异步 Python SDK](phase-07-python-sdk.md) | 已完成 |
 | 8 | [低可信检索结果提醒](phase-08-low-confidence-warning.md) | 已完成 |
 | 9 | [Python SDK 数据库初始化接口](phase-09-sdk-database-init.md) | 已完成 |
+| 10 | [公共数据模型领域化整理](phase-10-domain-models.md) | 已完成 |
