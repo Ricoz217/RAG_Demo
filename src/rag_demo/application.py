@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import json
 import sys
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Self
 
@@ -13,7 +12,6 @@ import httpx
 from psycopg.types.json import Jsonb
 
 from rag_demo.bm25_retriever import (
-    BM25BuildResult,
     BM25IndexError,
     BM25IndexManager,
     BM25Retriever,
@@ -28,37 +26,28 @@ from rag_demo.ingest_service import (
     IdempotencyConflictError,
     IdempotencyInProgressError,
 )
+from rag_demo.models.operations import DoctorCheck, DoctorReport
+from rag_demo.models.retrieval import BM25BuildResult, SearchRequest, SearchResponse
+from rag_demo.models.rewrite import (
+    QueryRewriteExperiment,
+    QueryRewriteResult,
+    QuerySearchResponse,
+)
+from rag_demo.query_rewriter import (
+    QueryRewriter,
+    QueryRewriteSearchService,
+)
 from rag_demo.reranker_client import RerankerClient
 from rag_demo.search_service import (
     HybridRecallService,
     HybridSearchService,
-    SearchRequest,
-    SearchResponse,
 )
+
+__all__ = ["ApplicationNotStartedError", "DoctorCheck", "DoctorReport", "RAGApplication"]
 
 
 class ApplicationNotStartedError(RuntimeError):
     """Raised when a managed resource is accessed outside its lifecycle."""
-
-
-@dataclass(frozen=True, slots=True)
-class DoctorCheck:
-    """One observable infrastructure check."""
-
-    name: str
-    passed: bool
-    detail: str
-
-
-@dataclass(frozen=True, slots=True)
-class DoctorReport:
-    """Complete infrastructure readiness report."""
-
-    checks: tuple[DoctorCheck, ...]
-
-    @property
-    def passed(self) -> bool:
-        return all(check.passed for check in self.checks)
 
 
 class RAGApplication:
@@ -76,6 +65,7 @@ class RAGApplication:
         self._bm25_manager: BM25IndexManager | None = None
         self._bm25_retriever: BM25Retriever | None = None
         self._search_service: HybridSearchService | None = None
+        self._query_rewrite_search_service: QueryRewriteSearchService | None = None
 
     async def open(self) -> None:
         """Open the database pool and reusable HTTP client once."""
@@ -122,6 +112,7 @@ class RAGApplication:
         database = self._database
         http_client = self._http_client
         self._search_service = None
+        self._query_rewrite_search_service = None
         self._bm25_retriever = None
         self._bm25_manager = None
         self._dense_service = None
@@ -245,6 +236,7 @@ class RAGApplication:
         self._search_service = HybridSearchService(
             recall_service=recall,
             reranker_client=self.reranker_client,
+            reranker_low_confidence_threshold=(self.settings.reranker_low_confidence_threshold),
         )
         return retriever
 
@@ -253,6 +245,38 @@ class RAGApplication:
         if self._search_service is None:
             await self.load_bm25()
         return await self._required(self._search_service).search(request)
+
+    async def search_query(
+        self,
+        request: SearchRequest,
+        *,
+        rewrite: bool = False,
+    ) -> QuerySearchResponse:
+        """Optionally rewrite immediately before the unchanged retrieval pipeline."""
+        if not rewrite:
+            response = await self.search(request)
+            return QuerySearchResponse(
+                rewrite_enabled=False,
+                rewrite=QueryRewriteResult.disabled(request.query),
+                response=response,
+            )
+        return await self._rewrite_search_service().search(request, rewrite=True)
+
+    async def compare_query_rewrite(
+        self,
+        request: SearchRequest,
+    ) -> QueryRewriteExperiment:
+        """Run a neutral without/with Rewrite experiment for one query."""
+        return await self._rewrite_search_service().compare(request)
+
+    def _rewrite_search_service(self) -> QueryRewriteSearchService:
+        if self._query_rewrite_search_service is None:
+            rewriter = QueryRewriter.from_json(self.settings.query_aliases_path)
+            self._query_rewrite_search_service = QueryRewriteSearchService(
+                search_provider=self,
+                rewriter=rewriter,
+            )
+        return self._query_rewrite_search_service
 
     async def doctor(self) -> DoctorReport:
         """Exercise every configured local dependency without exposing secrets."""

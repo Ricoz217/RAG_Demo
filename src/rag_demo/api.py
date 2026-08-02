@@ -8,7 +8,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import FastAPI, Header, HTTPException, Request, status
+from fastapi import FastAPI, Header, HTTPException, Request, Response, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -16,12 +16,12 @@ from pydantic import BaseModel, Field
 from rag_demo.application import RAGApplication
 from rag_demo.bm25_retriever import BM25IndexError
 from rag_demo.config import Settings
-from rag_demo.dense_retriever import DenseSearchMode
 from rag_demo.ingest_service import (
     IdempotencyConflictError,
     IdempotencyInProgressError,
 )
-from rag_demo.search_service import SearchRequest, SearchResponse
+from rag_demo.models import DenseSearchMode, QuerySearchResponse, SearchRequest
+from rag_demo.query_rewriter import QueryRewriteConfigurationError
 
 
 class SearchBody(BaseModel):
@@ -35,6 +35,7 @@ class SearchBody(BaseModel):
     final_top_k: int | None = Field(default=None, gt=0)
     dense_mode: DenseSearchMode = DenseSearchMode.HNSW
     use_reranker: bool = True
+    rewrite: bool = False
     debug: bool = False
 
 
@@ -147,7 +148,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 use_reranker=body.use_reranker,
                 debug=body.debug,
             )
-            response = await application.search(core_request)
+            response = await application.search_query(core_request, rewrite=body.rewrite)
+        except QueryRewriteConfigurationError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except BM25IndexError as exc:
@@ -158,10 +161,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def ingest_endpoint(
         body: IngestBody,
         request: Request,
+        response: Response,
         idempotency_key: Annotated[
-            str,
+            str | None,
             Header(alias="Idempotency-Key", min_length=1),
-        ],
+        ] = None,
     ) -> dict[str, int | float]:
         application = _application(request)
         source = body.source.resolve()
@@ -176,10 +180,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             source_root=source_root,
             language=body.language,
         )
+        effective_key = (
+            ingestor.idempotency_key_for(source) if idempotency_key is None else idempotency_key
+        )
         try:
             result = await ingestor.ingest_path(
                 source,
-                idempotency_key=idempotency_key,
+                idempotency_key=effective_key,
             )
         except (IdempotencyConflictError, IdempotencyInProgressError) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -187,6 +194,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="source path not found") from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        response.headers["Idempotency-Key"] = effective_key
         return result.to_json()
 
     @app.post("/v1/bm25/rebuild")
@@ -222,13 +230,18 @@ def _infer_source_root(source: Path) -> Path:
     return current
 
 
-def _search_payload(response: SearchResponse, *, debug: bool) -> dict[str, Any]:
+def _search_payload(execution: QuerySearchResponse, *, debug: bool) -> dict[str, Any]:
+    response = execution.response
     payload: dict[str, Any] = {
-        "query": response.query,
+        "query": execution.rewrite.original_query,
+        "effective_query": execution.rewrite.effective_query,
+        "rewrite_enabled": execution.rewrite_enabled,
+        "rewrite": execution.rewrite.to_json(),
         "results": [asdict(candidate) for candidate in response.results],
         "timings": asdict(response.timings),
         "counts": asdict(response.counts),
         "reranker_used": response.reranker_used,
+        "confidence": asdict(response.confidence),
     }
     if debug:
         payload["debug"] = {

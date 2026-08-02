@@ -5,7 +5,6 @@ from __future__ import annotations
 import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
 from typing import Any, Self
 
 from pgvector.psycopg import register_vector_async
@@ -13,30 +12,15 @@ from psycopg import AsyncConnection
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
+from rag_demo.models.operations import DatabaseStatus
+
 Row = dict[str, Any]
+
+__all__ = ["Database", "DatabaseStatus", "Row"]
 
 
 async def _configure_connection(connection: AsyncConnection[Any]) -> None:
     await register_vector_async(connection)
-
-
-@dataclass(frozen=True, slots=True)
-class DatabaseStatus:
-    """Observable database facts used by CLI and health checks."""
-
-    current_user: str
-    current_database: str
-    server_version: str
-    vector_version: str
-    embedding_dimensions: int
-    hnsw_index_present: bool
-    document_count: int
-    chunk_count: int
-    applied_migrations: tuple[str, ...]
-
-    @property
-    def embedding_column_type(self) -> str:
-        return f"vector({self.embedding_dimensions})"
 
 
 class Database:
@@ -54,7 +38,7 @@ class Database:
             min_size=min_size,
             max_size=max_size,
             open=False,
-            kwargs={"row_factory": dict_row},
+            kwargs={"row_factory": dict_row},  # row 模式，返回字典
             configure=_configure_connection,
             name="rag-demo",
         )
@@ -93,18 +77,24 @@ class Database:
                     current_database() AS current_database,
                     current_setting('server_version') AS server_version
                 """
-            )
+            )  # 设置 cursor 上下文
             identity = await identity_cursor.fetchone()
             if identity is None:
                 raise RuntimeError("database identity query returned no row")
 
             vector_cursor = await connection.execute(
                 "SELECT extversion FROM pg_extension WHERE extname = 'vector'"
-            )
+            )  # 检查当前 PG 是否有 pg_vector 插件
             vector_row = await vector_cursor.fetchone()
             if vector_row is None:
                 raise RuntimeError("pgvector extension is not installed")
 
+            # 获取系统信息，进行筛选
+            # 找符合当前 schema  当前是 'public'
+            # 找 schema 中名为 "chunks" 的表
+            # 找 chunks 中名为 "embedding" 的列
+            # 同时未标记为已删除
+            # 这里是为了获取列信息
             type_cursor = await connection.execute(
                 """
                 SELECT format_type(attribute.atttypid, attribute.atttypmod) AS column_type
@@ -120,7 +110,7 @@ class Database:
             type_row = await type_cursor.fetchone()
             if type_row is None:
                 raise RuntimeError("chunks.embedding column does not exist")
-            dimensions = _parse_vector_dimensions(type_row["column_type"])
+            dimensions = _parse_vector_dimensions(type_row["column_type"])  # 用正则获取维度
 
             facts_cursor = await connection.execute(
                 """

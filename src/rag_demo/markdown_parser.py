@@ -3,41 +3,16 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
-from enum import StrEnum
+from collections.abc import Mapping
 from pathlib import Path
 
+import frontmatter
 from markdown_it import MarkdownIt
 from markdown_it.token import Token
 
+from rag_demo.models.document import BlockKind, ParsedBlock, ParsedMarkdownDocument
 
-class BlockKind(StrEnum):
-    """Markdown block categories relevant to chunking."""
-
-    PARAGRAPH = "paragraph"
-    LIST = "list"
-    CODE = "code"
-
-
-@dataclass(frozen=True, slots=True)
-class ParsedBlock:
-    """One source-preserving Markdown block under a heading path."""
-
-    kind: BlockKind
-    text: str
-    heading_path: tuple[str, ...]
-    section_root: str
-
-
-@dataclass(frozen=True, slots=True)
-class ParsedMarkdownDocument:
-    """Normalized Markdown structure before chunking."""
-
-    title: str
-    source_path: Path
-    content_hash: str
-    blocks: tuple[ParsedBlock, ...]
-
+__all__ = ["BlockKind", "ParsedBlock", "ParsedMarkdownDocument", "parse_markdown"]
 
 _MARKDOWN = MarkdownIt("commonmark")
 _CONTAINER_BLOCKS = {
@@ -55,12 +30,13 @@ _LEAF_BLOCKS = {
 def parse_markdown(markdown: str, *, source_path: Path) -> ParsedMarkdownDocument:
     """Parse Markdown while retaining source text and heading breadcrumbs."""
     normalized = _normalize_line_endings(markdown)
-    lines = normalized.splitlines(keepends=True)
-    tokens = _MARKDOWN.parse(normalized)
+    metadata, body = frontmatter.parse(normalized)
+    lines = body.splitlines(keepends=True)
+    tokens = _MARKDOWN.parse(body)
 
-    title = source_path.stem
-    found_title = False
-    section_root = title
+    title = _semantic_title(metadata)
+    first_h1: str | None = None
+    section_root = source_path.stem
     headings: dict[int, str] = {}
     blocks: list[ParsedBlock] = []
 
@@ -69,16 +45,11 @@ def parse_markdown(markdown: str, *, source_path: Path) -> ParsedMarkdownDocumen
             level = int(token.tag.removeprefix("h"))
             heading = _heading_text(tokens, index)
 
-            if level == 1 and not found_title:
-                title = heading
-                found_title = True
-                section_root = heading
-                headings.clear()
-                continue
-
             _drop_heading_level_and_children(headings, level)
             headings[level] = heading
             if level == 1:
+                if first_h1 is None:
+                    first_h1 = heading
                 section_root = heading
             continue
 
@@ -100,6 +71,8 @@ def parse_markdown(markdown: str, *, source_path: Path) -> ParsedMarkdownDocumen
 
     return ParsedMarkdownDocument(
         title=title,
+        first_h1=first_h1,
+        frontmatter=metadata,
         source_path=source_path,
         content_hash=_sha256(normalized),
         blocks=tuple(blocks),
@@ -112,6 +85,14 @@ def _normalize_line_endings(text: str) -> str:
 
 def _sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _semantic_title(metadata: Mapping[str, object]) -> str | None:
+    for key in ("title", "name"):
+        value = metadata.get(key)
+        if isinstance(value, str) and (title := value.strip()):
+            return title
+    return None
 
 
 def _heading_text(tokens: list[Token], heading_index: int) -> str:

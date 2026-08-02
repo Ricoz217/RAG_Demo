@@ -16,3 +16,10 @@
 | 3C | [FastAPI REST 与接口一致性](phase-03c-fastapi-rest.md) | 已完成 |
 | 4A | [FastAPI 语料工具与五路评测](phase-04a-corpus-evaluation.md) | 已完成 |
 | 4B | [真实语料验收、README 与最终演示](phase-04b-real-acceptance.md) | 已完成 |
+| 5A | [Front Matter 与首个 H1 结构修正](phase-05a-frontmatter-heading-preservation.md) | 已完成 |
+| 5B | [摄取幂等键自动生成](phase-05b-automatic-idempotency-key.md) | 已完成 |
+| 6 | [确定性 Query Rewrite 与效果对比](phase-06-deterministic-query-rewrite.md) | 已完成 |
+| 7 | [同步与异步 Python SDK](phase-07-python-sdk.md) | 已完成 |
+| 8 | [低可信检索结果提醒](phase-08-low-confidence-warning.md) | 已完成 |
+| 9 | [Python SDK 数据库初始化接口](phase-09-sdk-database-init.md) | 已完成 |
+| 10 | [公共数据模型领域化整理](phase-10-domain-models.md) | 已完成 |

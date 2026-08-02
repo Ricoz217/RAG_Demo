@@ -90,6 +90,7 @@ class EmbeddingClient:
         return (await self.embed([query]))[0]
 
     async def _embed_batch(self, texts: list[str]) -> tuple[EmbeddingVector, ...]:
+        """发送到 llama / embedding 服务器"""
         try:
             response = await self._http_client.post(
                 self._endpoint,
@@ -121,6 +122,7 @@ class EmbeddingClient:
         *,
         expected_count: int,
     ) -> tuple[EmbeddingVector, ...]:
+        """验证解析结果，但这里有风险，没有做模型名词校验，只检查维度"""
         if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
             raise EmbeddingClientError("embedding response must contain a data list")
 

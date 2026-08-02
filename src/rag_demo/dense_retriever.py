@@ -4,89 +4,32 @@ from __future__ import annotations
 
 import math
 import time
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
-from enum import StrEnum
-from typing import Any, Protocol
+from collections.abc import Sequence
+from typing import Protocol
 
 import numpy as np
 from psycopg import AsyncConnection
 
 from rag_demo.db import Database, Row
 from rag_demo.embedding_client import EmbeddingVector
+from rag_demo.models.retrieval import (
+    DenseQueryPlan,
+    DenseQueryResponse,
+    DenseRetrievalResponse,
+    DenseSearchMode,
+    DenseSearchResult,
+)
 
-
-class DenseSearchMode(StrEnum):
-    """Supported pgvector execution modes."""
-
-    EXACT = "exact"
-    HNSW = "hnsw"
-
-
-@dataclass(frozen=True, slots=True)
-class DenseSearchResult:
-    """One ranked Chunk returned by pgvector."""
-
-    rank: int
-    chunk_id: int
-    document_id: int
-    title: str | None
-    source_repo: str
-    source_commit: str
-    source_path: str
-    language: str
-    heading_path: tuple[str, ...]
-    content_raw: str
-    retrieval_text: str
-    metadata: Mapping[str, Any]
-    cosine_distance: float
-    cosine_similarity: float
-
-
-@dataclass(frozen=True, slots=True)
-class DenseRetrievalResponse:
-    """Observable output from the database retrieval stage."""
-
-    mode: DenseSearchMode
-    results: tuple[DenseSearchResult, ...]
-    search_ms: float
-
-    @property
-    def candidate_count(self) -> int:
-        return len(self.results)
-
-
-@dataclass(frozen=True, slots=True)
-class DenseQueryPlan:
-    """PostgreSQL execution plan evidence for one dense mode."""
-
-    mode: DenseSearchMode
-    lines: tuple[str, ...]
-    ef_search: int | None
-
-    @property
-    def text(self) -> str:
-        return "\n".join(self.lines)
-
-    @property
-    def uses_hnsw(self) -> bool:
-        return "chunks_embedding_hnsw" in self.text
-
-
-@dataclass(frozen=True, slots=True)
-class DenseQueryResponse:
-    """Dense query output including embedding and retrieval timings."""
-
-    query: str
-    mode: DenseSearchMode
-    results: tuple[DenseSearchResult, ...]
-    query_embedding_ms: float
-    dense_search_ms: float
-    total_ms: float
-
-    @property
-    def candidate_count(self) -> int:
-        return len(self.results)
+__all__ = [
+    "DenseQueryPlan",
+    "DenseQueryResponse",
+    "DenseQueryService",
+    "DenseRetrievalResponse",
+    "DenseRetriever",
+    "DenseSearchMode",
+    "DenseSearchResult",
+    "QueryEmbeddingProvider",
+]
 
 
 class QueryEmbeddingProvider(Protocol):
@@ -104,6 +47,8 @@ class QueryEmbeddingProvider(Protocol):
         """Embed query texts in input order."""
 
 
+# 在初步筛选向量里面，漏了 commit 版本号
+# 数一下，一共 6 个参数，说实话，写得有点屎
 _DENSE_SQL = """
 SELECT
     ranked_chunks.chunk_id,
@@ -181,9 +126,12 @@ class DenseRetriever:
         top_k: int,
         mode: DenseSearchMode,
     ) -> DenseRetrievalResponse:
-        """Return cosine-ranked Chunks using the requested execution mode."""
+        """
+        Return cosine-ranked Chunks using the requested execution mode.
+        就是向量检索喵
+        """
         vector = self._validate_vector(query_vector)
-        self._validate_top_k(top_k)
+        self._validate_top_k(top_k)  # 就一个简单合规性判断
         started = time.perf_counter()
 
         async with self._database.connection() as connection:
@@ -210,11 +158,15 @@ class DenseRetriever:
         top_k: int,
         mode: DenseSearchMode,
     ) -> DenseQueryPlan:
-        """Execute and return an ANALYZE/BUFFERS plan for demonstration."""
+        """
+        Execute and return an ANALYZE/BUFFERS plan for demonstration.
+        Demo 演示用，生产不用
+        """
         vector = self._validate_vector(query_vector)
         self._validate_top_k(top_k)
 
         async with self._database.connection() as connection:
+            # Demo 手动切换是否使用 HNSW；生产交给 PostgreSQL Planner 自动选择。
             await self._configure_mode(connection, mode)
             cursor = await connection.execute(
                 f"EXPLAIN (ANALYZE, BUFFERS, FORMAT TEXT) {_DENSE_SQL}",
@@ -268,6 +220,7 @@ class DenseRetriever:
         vector: EmbeddingVector,
         top_k: int,
     ) -> tuple[object, ...]:
+        """写得有点屎说实话"""
         return (
             vector,
             vector,
@@ -320,13 +273,16 @@ class DenseQueryService:
         top_k: int,
         mode: DenseSearchMode = DenseSearchMode.HNSW,
     ) -> DenseQueryResponse:
-        """Embed and search one non-empty query."""
+        """
+        Embed and search one non-empty query.
+        检索服务入口
+        """
         if not query.strip():
             raise ValueError("query must not be empty")
 
         total_started = time.perf_counter()
         embedding_started = time.perf_counter()
-        vectors = await self._embedding_client.embed((query,))
+        vectors = await self._embedding_client.embed((query,))  # 获取嵌入向量
         query_embedding_ms = (time.perf_counter() - embedding_started) * 1000
         if len(vectors) != 1:
             raise RuntimeError("query embedding service must return exactly one vector")

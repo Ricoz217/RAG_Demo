@@ -3,28 +3,16 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
 from itertools import groupby
 
-from rag_demo.markdown_parser import ParsedBlock, ParsedMarkdownDocument
+from rag_demo.models.document import Chunk, ParsedBlock, ParsedMarkdownDocument
 
-CHUNKER_VERSION = "markdown-structure-v1"
+__all__ = ["CHUNKER_VERSION", "Chunk", "MarkdownChunker"]
 
-
-@dataclass(frozen=True, slots=True)
-class Chunk:
-    """One retrieval unit derived from a Markdown document."""
-
-    chunk_index: int
-    chunker_version: str
-    heading_path: tuple[str, ...]
-    content_raw: str
-    retrieval_text: str
-    char_count: int
-    content_hash: str
+CHUNKER_VERSION = "markdown-structure-v2"
 
 
-class MarkdownChunker:
+class MarkdownChunker:  # 惰性拆分，用的时候才拆一次，不保存
     """Chunk consecutive blocks without mixing different heading paths."""
 
     def __init__(
@@ -50,14 +38,24 @@ class MarkdownChunker:
     def version(self) -> str:
         return self._version
 
+    @property
+    def configuration(self) -> dict[str, int]:
+        """Return parameters that affect chunk boundaries."""
+        return {
+            "target_chars": self._target_chars,
+            "max_chars": self._max_chars,
+            "overlap_chars": self._overlap_chars,
+        }
+
     def chunk(self, document: ParsedMarkdownDocument) -> tuple[Chunk, ...]:
         """Create globally indexed chunks for a parsed document."""
         raw_chunks: list[tuple[tuple[str, ...], str]] = []
 
-        for (_, heading_path), section_blocks in groupby(
+        for (_, heading_path), section_blocks in groupby(  # 提取同一段/同一主体的内容
             document.blocks,
             key=_section_key,
         ):
+            # 将同一段尽量拆分，同时防止与其他段乱串掉。
             section_texts = self._chunk_section(tuple(section_blocks))
             raw_chunks.extend((heading_path, text) for text in section_texts)
 
@@ -72,7 +70,7 @@ class MarkdownChunker:
 
         for block in blocks:
             text = block.text
-            if len(text) > self._max_chars:
+            if len(text) > self._max_chars:  # 拆分超长
                 if current:
                     completed.append(current)
                     current = ""
@@ -84,6 +82,7 @@ class MarkdownChunker:
                 continue
 
             candidate = f"{current}\n\n{text}"
+            # 字数太少，不够，继续合并。
             if len(current) < self._target_chars and len(candidate) <= self._max_chars:
                 current = candidate
                 continue
@@ -111,7 +110,7 @@ class MarkdownChunker:
             segments.append(text[start:end])
             if end == len(text):
                 break
-            start = end - self._overlap_chars
+            start = end - self._overlap_chars  # 这里产生 overlap
 
         return tuple(segments)
 
@@ -123,7 +122,11 @@ class MarkdownChunker:
         content_raw: str,
     ) -> Chunk:
         breadcrumb = " / ".join(heading_path) if heading_path else "（文档正文）"
-        retrieval_text = f"[文档：{document.title}]\n[章节：{breadcrumb}]\n{content_raw}"
+        context = []
+        if document.title is not None:
+            context.append(f"[文档：{document.title}]")
+        context.extend((f"[章节：{breadcrumb}]", content_raw))
+        retrieval_text = "\n".join(context)
         return Chunk(
             chunk_index=chunk_index,
             chunker_version=self._version,

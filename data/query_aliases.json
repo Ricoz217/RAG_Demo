@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "aliases": {
+    "PG": "PostgreSQL",
+    "WAL": "Write-Ahead Log",
+    "RAG": "Retrieval-Augmented Generation",
+    "REST": "Representational State Transfer",
+    "API": "Application Programming Interface",
+    "依赖注入": "Dependency Injection",
+    "请求体": "Request Body",
+    "路径参数": "Path Parameters",
+    "查询参数": "Query Parameters",
+    "鉴权": "Authentication",
+    "向量检索": "Vector Search",
+    "混合检索": "Hybrid Search"
+  }
+}

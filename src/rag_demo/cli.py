@@ -1,7 +1,5 @@
 """Command-line interface for the Hybrid RAG demo."""
 
-import hashlib
-import json
 from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Annotated
@@ -12,21 +10,31 @@ from rich.console import Console
 from rich.table import Table
 
 from rag_demo import __version__
-from rag_demo.application import DoctorReport, RAGApplication
+from rag_demo.application import RAGApplication
 from rag_demo.asyncio_compat import run_async
 from rag_demo.config import Settings
-from rag_demo.corpus import CorpusInfo, download_fastapi, inspect_corpus
-from rag_demo.db import Database, DatabaseStatus
-from rag_demo.dense_retriever import DenseSearchMode
+from rag_demo.corpus import download_fastapi, inspect_corpus
+from rag_demo.db import Database
 from rag_demo.evaluation import (
-    BenchmarkReport,
     BenchmarkService,
-    EvaluationMethod,
     load_evaluation_queries,
 )
-from rag_demo.ingest_service import IngestResult
 from rag_demo.migrations import apply_migrations
-from rag_demo.search_service import SearchCandidate, SearchRequest, SearchResponse
+from rag_demo.models import (
+    BenchmarkReport,
+    CorpusInfo,
+    DatabaseStatus,
+    DenseSearchMode,
+    DoctorReport,
+    EvaluationMethod,
+    IngestResult,
+    QueryRewriteExperiment,
+    QuerySearchResponse,
+    SearchCandidate,
+    SearchConfidence,
+    SearchRequest,
+    SearchResponse,
+)
 
 app = typer.Typer(
     name="rag-demo",
@@ -127,8 +135,8 @@ async def _ingest(
     source_commit: str,
     source_root: Path,
     language: str,
-    idempotency_key: str,
-) -> IngestResult:
+    idempotency_key: str | None,
+) -> tuple[IngestResult, str]:
     async with RAGApplication(settings) as application:
         ingestor = application.create_ingestor(
             source_repo=source_repo,
@@ -136,10 +144,14 @@ async def _ingest(
             source_root=source_root,
             language=language,
         )
-        return await ingestor.ingest_path(
-            source,
-            idempotency_key=idempotency_key,
+        effective_key = (
+            ingestor.idempotency_key_for(source) if idempotency_key is None else idempotency_key
         )
+        result = await ingestor.ingest_path(
+            source,
+            idempotency_key=effective_key,
+        )
+        return result, effective_key
 
 
 @app.command("ingest")
@@ -169,16 +181,16 @@ def ingest(
         ),
     ],
     idempotency_key: Annotated[
-        str,
-        typer.Option(help="Stable key for this exact ingestion request."),
-    ],
+        str | None,
+        typer.Option(help="Override the generated stable ingestion key."),
+    ] = None,
     language: Annotated[
         str,
         typer.Option(help="BCP-47-style source language label."),
     ] = "zh",
 ) -> None:
     """Parse, embed, and atomically upsert Markdown documents."""
-    result = run_async(
+    result, stable_key = run_async(
         _ingest(
             Settings(),
             source=source,
@@ -189,6 +201,7 @@ def ingest(
             idempotency_key=idempotency_key,
         )
     )
+    console.print(f"Idempotency-Key: {stable_key}")
     _print_ingest_result(result)
 
 
@@ -226,8 +239,8 @@ async def _ingest_fastapi(
     *,
     info: CorpusInfo,
     language: str,
-    idempotency_key: str,
-) -> IngestResult:
+    idempotency_key: str | None,
+) -> tuple[IngestResult, str]:
     source = info.source_directory(language)
     if not source.is_dir():
         raise FileNotFoundError(source)
@@ -238,10 +251,14 @@ async def _ingest_fastapi(
             source_root=info.path,
             language=language,
         )
-        return await ingestor.ingest_path(
-            source,
-            idempotency_key=idempotency_key,
+        effective_key = (
+            ingestor.idempotency_key_for(source) if idempotency_key is None else idempotency_key
         )
+        result = await ingestor.ingest_path(
+            source,
+            idempotency_key=effective_key,
+        )
+        return result, effective_key
 
 
 @corpus_app.command("ingest-fastapi")
@@ -266,17 +283,12 @@ def corpus_ingest_fastapi(
     """Ingest one FastAPI documentation language with Git provenance."""
     settings = Settings()
     info = inspect_corpus(destination)
-    stable_key = idempotency_key or _fastapi_ingestion_key(
-        info,
-        language=language,
-        settings=settings,
-    )
-    result = run_async(
+    result, stable_key = run_async(
         _ingest_fastapi(
             settings,
             info=info,
             language=language,
-            idempotency_key=stable_key,
+            idempotency_key=idempotency_key,
         )
     )
     _print_corpus_info(info)
@@ -295,30 +307,6 @@ def _print_corpus_info(info: CorpusInfo) -> None:
     table.add_row("Chinese Markdown", str(info.zh_markdown_count))
     table.add_row("English Markdown", str(info.en_markdown_count))
     console.print(table)
-
-
-def _fastapi_ingestion_key(
-    info: CorpusInfo,
-    *,
-    language: str,
-    settings: Settings,
-) -> str:
-    canonical = json.dumps(
-        {
-            "repository": info.repository_url,
-            "commit": info.commit,
-            "language": language,
-            "embedding_model": settings.embedding_model,
-            "embedding_dimensions": settings.embedding_dimensions,
-            "chunk_target_chars": settings.chunk_target_chars,
-            "chunk_max_chars": settings.chunk_max_chars,
-            "chunk_overlap_chars": settings.chunk_overlap_chars,
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:20]
-    return f"fastapi-{language}-{digest}"
 
 
 async def _rebuild_bm25(settings: Settings) -> tuple[str, int, float]:
@@ -414,6 +402,24 @@ async def _execute_search(
         return await application.search(request)
 
 
+async def _execute_query_search(
+    settings: Settings,
+    request: SearchRequest,
+    *,
+    rewrite: bool,
+) -> QuerySearchResponse:
+    async with RAGApplication(settings) as application:
+        return await application.search_query(request, rewrite=rewrite)
+
+
+async def _execute_rewrite_comparison(
+    settings: Settings,
+    request: SearchRequest,
+) -> QueryRewriteExperiment:
+    async with RAGApplication(settings) as application:
+        return await application.compare_query_rewrite(request)
+
+
 def _search_request(
     settings: Settings,
     *,
@@ -466,6 +472,13 @@ def search(
         bool,
         typer.Option("--rerank/--no-rerank", help="Enable Cross-Encoder reranking."),
     ] = True,
+    rewrite: Annotated[
+        bool,
+        typer.Option(
+            "--rewrite/--no-rewrite",
+            help="Apply deterministic normalization and alias expansion.",
+        ),
+    ] = False,
     debug: Annotated[
         bool,
         typer.Option(help="Display every intermediate ranking."),
@@ -484,8 +497,10 @@ def search(
         rerank=rerank,
         debug=debug,
     )
-    response = run_async(_execute_search(settings, request))
-    _print_search_response(response, debug=debug)
+    execution = run_async(_execute_query_search(settings, request, rewrite=rewrite))
+    if rewrite or debug:
+        _print_rewrite_summary(execution)
+    _print_search_response(execution.response, debug=debug)
 
 
 @app.command("compare")
@@ -548,6 +563,31 @@ def compare(
     _print_timings(response)
 
 
+@app.command("compare-rewrite")
+def compare_rewrite(
+    query: Annotated[str, typer.Argument(help="Query used for both real retrieval runs.")],
+    rerank: Annotated[
+        bool,
+        typer.Option("--rerank/--no-rerank", help="Enable Cross-Encoder reranking."),
+    ] = True,
+) -> None:
+    """Compare final results with and without Rewrite; neither side is assumed better."""
+    settings = Settings()
+    request = _search_request(
+        settings,
+        query=query,
+        dense_top_k=None,
+        bm25_top_k=None,
+        rerank_top_k=None,
+        final_top_k=None,
+        dense_mode=DenseSearchMode.HNSW,
+        rerank=rerank,
+        debug=False,
+    )
+    experiment = run_async(_execute_rewrite_comparison(settings, request))
+    _print_rewrite_experiment(experiment)
+
+
 @app.command("serve")
 def serve(
     host: Annotated[
@@ -578,6 +618,7 @@ def _print_search_response(response: SearchResponse, *, debug: bool) -> None:
             item.rerank_score if item.rerank_score is not None else item.rrf_score
         ),
     )
+    _print_confidence(response.confidence)
     if debug:
         _print_branch_results(
             "Dense Top-K",
@@ -619,6 +660,84 @@ def _print_search_response(response: SearchResponse, *, debug: bool) -> None:
                 score_getter=lambda item: item.rerank_score,
             )
     _print_timings(response)
+
+
+def _print_confidence(confidence: SearchConfidence) -> None:
+    if confidence.warning is None:
+        return
+    console.print(f"[yellow]WARNING: {confidence.warning}[/yellow]")
+    if confidence.score is not None:
+        console.print(
+            "Confidence evidence: "
+            f"top reranker score={confidence.score:.3f}, "
+            f"warning threshold={confidence.threshold:.3f}"
+        )
+
+
+def _print_rewrite_summary(execution: QuerySearchResponse) -> None:
+    rewrite = execution.rewrite
+    console.print(f"Rewrite: {'enabled' if execution.rewrite_enabled else 'disabled'}")
+    console.print(f"Original query: {rewrite.original_query}")
+    console.print(f"Effective query: {rewrite.effective_query}")
+    console.print(f"Applied rules: {', '.join(rewrite.applied_rules) or '(none)'}")
+    console.print(f"Rewrite ms: {rewrite.rewrite_ms:.3f}")
+
+
+def _print_rewrite_experiment(experiment: QueryRewriteExperiment) -> None:
+    without = experiment.without_rewrite
+    with_ = experiment.with_rewrite
+    _print_rewrite_summary(with_)
+    _print_candidate_table(
+        "Final Top-K without Rewrite",
+        without.response.results,
+        score_name="Final score",
+        score_getter=_final_score,
+    )
+    _print_candidate_table(
+        "Final Top-K with Rewrite",
+        with_.response.results,
+        score_name="Final score",
+        score_getter=_final_score,
+    )
+
+    comparison = experiment.comparison
+    table = Table(title="Final Top-K membership and rank comparison")
+    table.add_column("Chunk")
+    table.add_column("Without", justify="right")
+    table.add_column("With", justify="right")
+    table.add_column("Rank delta", justify="right")
+    for change in comparison.rank_changes:
+        table.add_row(
+            str(change.chunk_id),
+            str(change.without_rank or "-"),
+            str(change.with_rank or "-"),
+            str(change.rank_delta) if change.rank_delta is not None else "-",
+        )
+    console.print(table)
+    console.print(f"Same final order: {'yes' if comparison.same_order else 'no'}")
+    console.print(
+        "Only without Rewrite: "
+        f"{', '.join(map(str, comparison.only_without_chunk_ids)) or '(none)'}"
+    )
+    console.print(
+        f"Only with Rewrite: {', '.join(map(str, comparison.only_with_chunk_ids)) or '(none)'}"
+    )
+
+    timings = Table(title="Rewrite experiment timings")
+    timings.add_column("Run")
+    timings.add_column("Milliseconds", justify="right")
+    timings.add_row("Without Rewrite search", f"{without.response.timings.total_ms:.2f}")
+    timings.add_row("Rewrite stage", f"{with_.rewrite.rewrite_ms:.3f}")
+    timings.add_row("With Rewrite search", f"{with_.response.timings.total_ms:.2f}")
+    timings.add_row(
+        "With Rewrite total",
+        f"{with_.rewrite.rewrite_ms + with_.response.timings.total_ms:.2f}",
+    )
+    console.print(timings)
+
+
+def _final_score(candidate: SearchCandidate) -> float:
+    return candidate.rerank_score if candidate.rerank_score is not None else candidate.rrf_score
 
 
 def _print_candidate_table(

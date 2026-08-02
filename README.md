@@ -161,6 +161,11 @@ Doctor 会真实调用两个模型，而不只是检查端口。
   --no-rerank
 ```
 
+最终结果携带 `confidence`。默认使用 Top-1 Reranker 原始分数和
+`RERANKER_LOW_CONFIDENCE_THRESHOLD=-4.0` 做提醒：低于告警线时保留全部 Top-K，但 CLI 会提示
+结果可能不可信；关闭 Reranker 时状态为 `unassessed`。这个分数不是概率，告警线只适用于当前
+`bge-reranker-v2-m3` 与已验收语料，替换模型或语料后必须重新校准。
+
 切换为 exact 向量扫描：
 
 ```powershell
@@ -176,6 +181,28 @@ Doctor 会真实调用两个模型，而不只是检查端口。
   "OAuth2PasswordBearer 有什么作用？"
 ```
 
+Query Rewrite 默认关闭。需要时可启用确定性的 NFKC、空白规范化和别名扩展：
+
+```powershell
+.\.venv\Scripts\python.exe -m rag_demo search `
+  "如何声明请求体？" `
+  --rewrite `
+  --debug
+```
+
+别名字典保存在 `data/query_aliases.json`，扩展时同时保留规范词和原始别名，例如
+`请求体` 会成为 `Request Body (请求体)`。它不调用 LLM，也不保证检索结果更好。
+
+真实执行 Rewrite 关闭、开启两次检索，并中性展示 Final Top-K 的成员与排名差异：
+
+```powershell
+.\.venv\Scripts\python.exe -m rag_demo compare-rewrite `
+  "如何声明请求体？"
+```
+
+结果相同、变化或丢失原有候选都属于有效实验结论。该命令显示的是一次顺序执行的原始耗时，受冷启动与
+缓存影响，不应直接当作严谨的性能基准。
+
 输出小型五路评测：
 
 ```powershell
@@ -183,7 +210,66 @@ Doctor 会真实调用两个模型，而不只是检查端口。
 .\.venv\Scripts\python.exe -m rag_demo benchmark --debug
 ```
 
-## 6. FastAPI REST
+## 6. Python SDK
+
+普通 Python 脚本使用同步门面；一个 `with` 块内的所有调用共享同一个数据库连接池、HTTP Client、
+BM25 generation 和私有事件循环：
+
+```python
+from rag_demo import RAG
+
+rag = RAG()
+applied = rag.init_database()  # 新数据库执行 migration；重复调用返回空元组
+
+with rag:
+    response = rag.search(
+        "FastAPI 如何接收 JSON 请求体？",
+        final_top_k=5,
+    )
+
+    for candidate in response.results:
+        print(candidate.final_rank, candidate.source_path)
+        print(candidate.content_raw)
+
+    print(response.confidence.status, response.confidence.warning)
+```
+
+可直接运行完整示例：
+
+```powershell
+.\.venv\Scripts\python.exe examples\python_sdk_demo.py
+```
+
+FastAPI、异步 Agent 和已有事件循环使用 `AsyncRAG`：
+
+```python
+from rag_demo import AsyncRAG
+
+rag = AsyncRAG()
+applied = await rag.init_database()
+
+async with rag:
+    response = await rag.search("FastAPI 的依赖缓存如何工作？")
+```
+
+`init_database()` 使用 `DATABASE_URL` 中的应用账号执行 migration。目标数据库必须先由
+PostgreSQL 管理员执行 `CREATE EXTENSION vector;`；普通数据库 OWNER 不能安装当前默认配置下的
+pgvector 扩展，但可以继续创建本项目的表和索引。
+
+`search()` 返回现有强类型 `SearchResponse`。同步门面需要观察 Query Rewrite 时使用：
+
+```python
+with RAG() as rag:
+    execution = rag.search_query("如何声明请求体？", rewrite=True)
+    print(execution.rewrite.effective_query)
+    print(execution.response.results)
+```
+
+SDK 还提供 `init_database()`、`ingest()`、`rebuild_bm25()`、`reload_bm25()`、`doctor()` 和
+`compare_rewrite()`。同步 `RAG` 不能在已运行的事件循环中使用，此时应选择 `AsyncRAG`。不要为每次
+查询创建一个引擎；常驻进程应在启动时创建一次，在关闭时释放。
+
+## 7. FastAPI REST
 
 启动：
 
@@ -213,6 +299,7 @@ $body = @{
   bm25_top_k = 30
   rerank_top_k = 20
   final_top_k = 5
+  rewrite = $false
   debug = $true
 } | ConvertTo-Json
 
@@ -223,6 +310,10 @@ Invoke-RestMethod `
   -Body $body
 ```
 
+`POST /v1/search` 的 `rewrite` 默认是 `false`。响应同时返回 `query`、`effective_query`、
+`rewrite_enabled`、`rewrite` 和 `confidence` 详情，便于调用方保存实验条件，并在低可信时向最终用户
+展示警告，而不是把相对排名误当成可靠答案。
+
 摄取和 BM25 rebuild 必须携带：
 
 ```http
@@ -232,7 +323,7 @@ Idempotency-Key: caller-generated-stable-key
 相同 Key + 相同请求返回首次结果；冲突或正在处理返回 HTTP 409。幂等状态保存在
 PostgreSQL，不依赖进程内缓存。
 
-## 7. 真实验收结果
+## 8. 真实验收结果
 
 FastAPI corpus：
 
@@ -276,7 +367,7 @@ Embedding HTTP requests: 0
 - HNSW 与 exact 在该小数据集上的 Recall/MRR 相同，平均 Dense 阶段耗时更低。
 - Reranker 将 Recall@10 从 0.9 提升到 1.0，并改变最终候选顺序。
 
-## 8. 工程检查
+## 9. 工程检查
 
 ```powershell
 .\.venv\Scripts\pytest.exe
@@ -288,20 +379,27 @@ Embedding HTTP requests: 0
 最终施工阶段运行结果：
 
 ```text
-83 tests passed
-coverage > 80%
-Ruff passed
+117 tests passed
+coverage: 85.50%
+SDK 相关文件 Ruff passed
 Mypy strict passed
 ```
 
 测试包含真实 PostgreSQL、pgvector、真实本地模型 smoke test、Mock HTTP 契约测试、HNSW
 `EXPLAIN (ANALYZE, BUFFERS)`、摄取并发、REST 幂等和 CLI/REST 顺序一致性。
 
-## 9. 项目结构
+## 10. 项目结构
 
 ```text
 migrations/                 PostgreSQL + pgvector migration
 src/rag_demo/
+  models/                   按领域集中管理公共数据契约
+    document.py             Markdown、Block 与 Chunk
+    retrieval.py            Dense、BM25、RRF 与最终搜索结果
+    ingestion.py            摄取结果
+    rewrite.py              Query Rewrite 与效果对比结果
+    operations.py           数据库、Doctor 与语料操作结果
+    evaluation.py           Benchmark 查询、命中与指标
   application.py            共享资源生命周期与对象组装
   markdown_parser.py        Markdown 结构解析
   chunker.py                Heading-aware Chunk
@@ -311,17 +409,21 @@ src/rag_demo/
   bm25_retriever.py         jieba + bm25s generation
   rrf.py                    Reciprocal Rank Fusion
   reranker_client.py        llama.cpp Reranker Client
+  query_rewriter.py         确定性 Query Rewrite 与中性 A/B 差异
   search_service.py         并行召回与最终排名
+  sdk.py                    同步/异步 Python SDK 门面
   api.py                    FastAPI REST
   cli.py                    Typer CLI
   corpus.py                 FastAPI sparse clone
   evaluation.py             五路质量与延迟评测
 tests/                      unit + integration
+examples/python_sdk_demo.py 可直接运行的同步 SDK 演示
 data/evaluation_queries.json
+data/query_aliases.json
 docs/construction/          分阶段施工与验证记录
 ```
 
-## 10. 常见问题
+## 11. 常见问题
 
 `doctor` 显示 BM25 未就绪：
 

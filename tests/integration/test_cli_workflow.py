@@ -93,6 +93,20 @@ OAuth2PasswordBearer 从请求头读取 Bearer Token。
         assert "RRF Top-K" in search.output
         assert "demo.md" in search.output
 
+        rewritten_search = runner.invoke(
+            app,
+            [
+                "search",
+                "如何声明请求体？",
+                "--rewrite",
+                "--no-rerank",
+            ],
+        )
+        assert rewritten_search.exit_code == 0, rewritten_search.output
+        assert "Rewrite: enabled" in rewritten_search.output
+        assert "alias:请求体" in rewritten_search.output
+        assert "Request Body" in rewritten_search.output
+
         compare = runner.invoke(
             app,
             ["compare", "OAuth2PasswordBearer 有什么作用？"],
@@ -102,6 +116,17 @@ OAuth2PasswordBearer 从请求头读取 Bearer Token。
         assert "Dense only" in compare.output
         assert "Hybrid RRF" in compare.output
         assert "Hybrid RRF + Reranker" in compare.output
+
+        rewrite_comparison = runner.invoke(
+            app,
+            ["compare-rewrite", "如何声明请求体？", "--no-rerank"],
+        )
+        assert rewrite_comparison.exit_code == 0, rewrite_comparison.output
+        assert "Final Top-K without Rewrite" in rewrite_comparison.output
+        assert "Final Top-K with Rewrite" in rewrite_comparison.output
+        assert "membership and rank" in rewrite_comparison.output
+        assert "comparison" in rewrite_comparison.output
+        assert "Same final order:" in rewrite_comparison.output
 
         doctor = runner.invoke(app, ["doctor"])
         assert doctor.exit_code == 0, doctor.output

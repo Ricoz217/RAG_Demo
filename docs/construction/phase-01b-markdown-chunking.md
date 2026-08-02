@@ -1,5 +1,9 @@
 # 阶段 1B：Markdown 解析与 Chunk
 
+> 历史说明：本阶段记录的是第一版行为。阶段 5A 已增加 Front Matter 解析，并改为保留
+> 首个 H1 的完整章节路径；最新行为见
+> [阶段 5A](phase-05a-frontmatter-heading-preservation.md)。
+
 ## 阶段目标
 
 只依赖 Markdown 结构和字符长度，把 `.md` 原文转换成可追溯、可重复、适合 Embedding/

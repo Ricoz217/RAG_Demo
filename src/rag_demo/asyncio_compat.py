@@ -11,10 +11,11 @@ from typing import Any
 
 def run_async[ResultT](coroutine: Coroutine[Any, Any, ResultT]) -> ResultT:
     """Run a coroutine with an event loop supported by Psycopg on Windows."""
+    return asyncio.run(coroutine, loop_factory=create_compatible_event_loop)
+
+
+def create_compatible_event_loop() -> asyncio.AbstractEventLoop:
+    """Create an event loop compatible with Psycopg on the current platform."""
     if sys.platform == "win32":
-        return asyncio.run(coroutine, loop_factory=_windows_selector_loop)
-    return asyncio.run(coroutine)
-
-
-def _windows_selector_loop() -> asyncio.AbstractEventLoop:
-    return asyncio.SelectorEventLoop(selectors.SelectSelector())
+        return asyncio.SelectorEventLoop(selectors.SelectSelector())
+    return asyncio.new_event_loop()

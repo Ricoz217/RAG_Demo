@@ -143,6 +143,29 @@ async def test_repeated_ingestion_is_idempotent_and_skips_unchanged_embeddings(
 
 
 @pytest.mark.asyncio
+async def test_ingestion_generates_a_stable_key_when_none_is_supplied(tmp_path: Path) -> None:
+    source = tmp_path / "docs"
+    source.mkdir()
+    (source / "body.md").write_text("# Demo\n\nStable body.", encoding="utf-8")
+    settings = Settings()
+    await apply_migrations(settings.database_url.get_secret_value())
+
+    async with Database(settings.database_url.get_secret_value()) as database:
+        embeddings = FakeEmbeddingClient()
+        ingestor = _ingestor(database, embeddings, tmp_path, source_commit="commit-auto-key")
+        generated_key = ingestor.idempotency_key_for(source)
+        await _cleanup(database, idempotency_keys=(generated_key,))
+        try:
+            first = await ingestor.ingest_path(source)
+            repeated = await ingestor.ingest_path(source)
+        finally:
+            await _cleanup(database, idempotency_keys=(generated_key,))
+
+    assert repeated == first
+    assert len(embeddings.calls) == 1
+
+
+@pytest.mark.asyncio
 async def test_same_idempotency_key_rejects_different_request(
     tmp_path: Path,
 ) -> None:

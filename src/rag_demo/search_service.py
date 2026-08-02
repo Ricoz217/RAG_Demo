@@ -5,13 +5,42 @@ from __future__ import annotations
 import asyncio
 import math
 import time
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, replace
-from typing import Any, Protocol
+from collections.abc import Sequence
+from dataclasses import replace
+from typing import Protocol
 
-from rag_demo.bm25_retriever import BM25SearchResponse
-from rag_demo.dense_retriever import DenseQueryResponse, DenseSearchMode
-from rag_demo.rrf import FusedCandidate, ScoredCandidate, reciprocal_rank_fusion
+from rag_demo.models.retrieval import (
+    BM25SearchResponse,
+    DenseQueryResponse,
+    DenseSearchMode,
+    HybridRecallResponse,
+    ScoredCandidate,
+    SearchCandidate,
+    SearchCandidateCounts,
+    SearchConfidence,
+    SearchConfidenceStatus,
+    SearchRequest,
+    SearchResponse,
+    SearchTimings,
+)
+from rag_demo.rrf import reciprocal_rank_fusion
+
+__all__ = [
+    "BM25QueryProvider",
+    "DenseQueryProvider",
+    "HybridRecallProvider",
+    "HybridRecallResponse",
+    "HybridRecallService",
+    "HybridSearchService",
+    "RerankerProvider",
+    "SearchCandidate",
+    "SearchCandidateCounts",
+    "SearchConfidence",
+    "SearchConfidenceStatus",
+    "SearchRequest",
+    "SearchResponse",
+    "SearchTimings",
+]
 
 
 class DenseQueryProvider(Protocol):
@@ -49,22 +78,6 @@ class RerankerProvider(Protocol):
         """Return scores aligned with the input documents."""
 
 
-@dataclass(frozen=True, slots=True)
-class HybridRecallResponse:
-    """Dense, BM25, and RRF stages retained for debug output."""
-
-    query: str
-    dense: DenseQueryResponse
-    bm25: BM25SearchResponse
-    fused: tuple[FusedCandidate, ...]
-    rrf_ms: float
-    total_ms: float
-
-    @property
-    def union_candidate_count(self) -> int:
-        return len(self.fused)
-
-
 class HybridRecallProvider(Protocol):
     """Hybrid recall behavior consumed by final search."""
 
@@ -78,96 +91,6 @@ class HybridRecallProvider(Protocol):
         dense_mode: DenseSearchMode,
     ) -> HybridRecallResponse:
         """Return observable Dense, BM25, and RRF stages."""
-
-
-@dataclass(frozen=True, slots=True)
-class SearchRequest:
-    """Validated core search parameters shared by CLI and REST."""
-
-    query: str
-    dense_top_k: int = 30
-    bm25_top_k: int = 30
-    rrf_rank_constant: int = 60
-    rerank_top_k: int = 20
-    final_top_k: int = 5
-    dense_mode: DenseSearchMode = DenseSearchMode.HNSW
-    use_reranker: bool = True
-    debug: bool = False
-
-    def __post_init__(self) -> None:
-        if not self.query.strip():
-            raise ValueError("query must not be empty")
-        for name, value in (
-            ("dense_top_k", self.dense_top_k),
-            ("bm25_top_k", self.bm25_top_k),
-            ("rrf_rank_constant", self.rrf_rank_constant),
-            ("rerank_top_k", self.rerank_top_k),
-            ("final_top_k", self.final_top_k),
-        ):
-            if value <= 0:
-                raise ValueError(f"{name} must be positive")
-        if self.final_top_k > self.rerank_top_k:
-            raise ValueError("final_top_k must not exceed rerank_top_k")
-
-
-@dataclass(frozen=True, slots=True)
-class SearchCandidate:
-    """Hydrated candidate retaining every ranking stage."""
-
-    chunk_id: int
-    document_id: int
-    title: str | None
-    source_repo: str
-    source_commit: str
-    source_path: str
-    language: str
-    heading_path: tuple[str, ...]
-    content_raw: str
-    retrieval_text: str
-    metadata: Mapping[str, Any]
-    dense_rank: int | None
-    dense_score: float | None
-    bm25_rank: int | None
-    bm25_score: float | None
-    rrf_rank: int
-    rrf_score: float
-    rerank_score: float | None
-    final_rank: int | None
-
-
-@dataclass(frozen=True, slots=True)
-class SearchTimings:
-    """Per-stage search latency in milliseconds."""
-
-    query_embedding_ms: float
-    dense_search_ms: float
-    bm25_search_ms: float
-    rrf_ms: float
-    rerank_ms: float
-    total_ms: float
-
-
-@dataclass(frozen=True, slots=True)
-class SearchCandidateCounts:
-    """Candidate counts at branch and union boundaries."""
-
-    dense_candidate_count: int
-    bm25_candidate_count: int
-    union_candidate_count: int
-
-
-@dataclass(frozen=True, slots=True)
-class SearchResponse:
-    """Final results plus complete intermediate evidence."""
-
-    query: str
-    results: tuple[SearchCandidate, ...]
-    reranked: tuple[SearchCandidate, ...]
-    fused_candidates: tuple[SearchCandidate, ...]
-    recall: HybridRecallResponse
-    timings: SearchTimings
-    counts: SearchCandidateCounts
-    reranker_used: bool
 
 
 class HybridRecallService:
@@ -189,9 +112,12 @@ class HybridRecallService:
         dense_top_k: int,
         bm25_top_k: int,
         rank_constant: int,
-        dense_mode: DenseSearchMode = DenseSearchMode.HNSW,
+        dense_mode: DenseSearchMode = DenseSearchMode.HNSW,  # 生产环境这个参数不应该存在
     ) -> HybridRecallResponse:
-        """Return all branch rankings and their RRF union."""
+        """
+        Return all branch rankings and their RRF union.
+        召回，其实就是检索，只是少了个 reranker
+        """
         if not query.strip():
             raise ValueError("query must not be empty")
         if dense_top_k <= 0:
@@ -241,16 +167,23 @@ class HybridRecallService:
 
 
 class HybridSearchService:
-    """Run hybrid recall and optionally rerank the RRF candidate prefix."""
+    """
+    Run hybrid recall and optionally rerank the RRF candidate prefix.
+    大一统检索入口
+    """
 
     def __init__(
         self,
         *,
         recall_service: HybridRecallProvider,
         reranker_client: RerankerProvider | None,
+        reranker_low_confidence_threshold: float,
     ) -> None:
+        if not math.isfinite(reranker_low_confidence_threshold):
+            raise ValueError("reranker_low_confidence_threshold must be finite")
         self._recall_service = recall_service
         self._reranker_client = reranker_client
+        self._reranker_low_confidence_threshold = reranker_low_confidence_threshold
 
     async def search(self, request: SearchRequest) -> SearchResponse:
         """Execute the complete retrieval pipeline without answer generation."""
@@ -270,8 +203,10 @@ class HybridSearchService:
         if request.use_reranker and candidates:
             if self._reranker_client is None:
                 raise RuntimeError("reranker is enabled but no client is configured")
-            rerank_input = candidates[: request.rerank_top_k]
+            rerank_input = candidates[: request.rerank_top_k]  # 只取前几个，节约成本
             rerank_started = time.perf_counter()
+
+            # 这里只返回分数元组；索引至少可以定位第几个结果失败，以便针对性重试。
             scores = await self._reranker_client.rerank(
                 request.query,
                 tuple(candidate.retrieval_text for candidate in rerank_input),
@@ -281,6 +216,8 @@ class HybridSearchService:
                 raise RuntimeError("reranker returned an unexpected score count")
             if not all(math.isfinite(score) for score in scores):
                 raise RuntimeError("reranker returned a non-finite score")
+
+            # 严重不合理，只作为 Demo，因为完全没管原始分数，Rerank直接出来了，也没有后续处理/校准
             reranked = tuple(
                 candidate
                 for _, candidate in sorted(
@@ -307,6 +244,11 @@ class HybridSearchService:
             replace(candidate, final_rank=rank)
             for rank, candidate in enumerate(final_base, start=1)
         )
+        confidence = _assess_confidence(
+            results,
+            reranker_used=reranker_used,
+            threshold=self._reranker_low_confidence_threshold,
+        )
         return SearchResponse(
             query=request.query,
             results=results,
@@ -327,12 +269,63 @@ class HybridSearchService:
                 union_candidate_count=recall.union_candidate_count,
             ),
             reranker_used=reranker_used,
+            confidence=confidence,
         )
+
+
+def _assess_confidence(
+    results: tuple[SearchCandidate, ...],
+    *,
+    reranker_used: bool,
+    threshold: float,
+) -> SearchConfidence:
+    if not reranker_used:
+        return SearchConfidence(
+            status=SearchConfidenceStatus.UNASSESSED,
+            score=None,
+            threshold=threshold,
+            warning="Reranker was disabled, so final-result confidence was not assessed.",
+        )
+    if not results:
+        return SearchConfidence(
+            status=SearchConfidenceStatus.UNASSESSED,
+            score=None,
+            threshold=threshold,
+            warning="No final result was available for confidence assessment.",
+        )
+
+    score = results[0].rerank_score
+    if score is None:
+        raise RuntimeError("reranked final result has no reranker score")
+    if score < threshold:
+        return SearchConfidence(
+            status=SearchConfidenceStatus.LOW,
+            score=score,
+            threshold=threshold,
+            warning=(
+                "Top reranker score is below the configured warning threshold; "
+                "results may be unreliable."
+            ),
+        )
+    return SearchConfidence(
+        status=SearchConfidenceStatus.NOT_FLAGGED,
+        score=score,
+        threshold=threshold,
+        warning=None,
+    )
 
 
 def _hydrate_fused_candidates(
     recall: HybridRecallResponse,
 ) -> tuple[SearchCandidate, ...]:
+    """
+    并不合理，完全取决于 RRF_Rank，忽略了分数绝对值的意义
+    这里偷懒了
+    生产做法:
+    1. 扩大候选
+    2. 保留通道高分名额
+    3. 对原始分数进行标准化/归一/融合/加权，更高级的甚至可以用训练过的校准模型进行快速校准
+    """
     dense_by_id = {result.chunk_id: result for result in recall.dense.results}
     bm25_by_id = {result.chunk_id: result for result in recall.bm25.results}
     hydrated: list[SearchCandidate] = []
