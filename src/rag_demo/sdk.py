@@ -154,7 +154,10 @@ class AsyncRAG:
         use_reranker: bool = True,
         debug: bool = False,
     ) -> QuerySearchResponse:
-        """Optionally rewrite one query and retain the rewrite evidence."""
+        """
+        Optionally rewrite one query and retain the rewrite evidence.
+        这命名的是一个什么玩意啊
+        """
         self._require_open()
         request = self._search_request(
             query,

@@ -30,3 +30,54 @@
 - 限制每个 chunk 的结果数量
 - 多版本去重
 - 来源去重
+
+
+## 生产级 RAG 链路
+
+```text
+数据连接器
+Git / S3 / SharePoint / Notion / 本地上传
+        ↓
+原始文件存储
+Object Storage + Content Hash + Version
+        ↓
+MIME 检测和格式路由
+        ↓
+格式专用 Parser
+PDF / Word / PPT / Excel / HTML / OCR
+        ↓
+统一 Document IR
+节点、层级、顺序、坐标、表格、来源
+        ↓
+质量检查
+乱码、空页、OCR 置信度、表格完整性
+        ↓
+内容增强
+语言、实体、别名、摘要、权限、PII
+        ↓
+格式感知 Chunk
+短片段合并、超长拆分、Parent/Child
+        ↓
+派生检索表达
+retrieval_text / table_html / captions
+        ↓
+多路索引
+Dense / BM25 / Metadata / Entity / Summary
+        ↓
+Query 处理
+规范化、权限、路由、可选 Rewrite
+        ↓
+多路召回
+        ↓
+融合和候选保护
+        ↓
+Reranker
+        ↓
+Parent/Neighbor 扩展
+        ↓
+去重与 Context Packing
+        ↓
+LLM 生成和引用
+        ↓
+反馈、评测和持续重建
+```
