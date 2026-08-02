@@ -15,15 +15,15 @@ from rag_demo.sdk import (
     IngestResult,
     BM25BuildResult,
     BM25Retriever,
-    DoctorReport,
+    DoctorReport
 )
 from rag_demo.asyncio_compat import run_async
 
 
-_RAG = AsyncRAG()  # 构建一个默认单例
-# _RAG = AsyncRAG(settings=Settings(
-#     bm25_index_path="data/indexes/bm25_demo_02"
-# ))
+# _RAG = AsyncRAG()  # 构建一个默认单例
+_RAG = AsyncRAG(settings=Settings(
+    bm25_index_path="data/indexes/bm25_demo_02"
+))
 
 _EXECUTOR = ThreadPoolExecutor()
 
@@ -61,22 +61,24 @@ def indent_print(obj: object):
 
 async def main():
     async with _RAG as rag_engine:
+        await rag_engine.init_database()
         async def search(query: str = "", rewrite: str = "") -> QuerySearchResponse:
             """查询"""
             rewrite = True if rewrite.lower() == "true" else False
             return await rag_engine.search_query(query=query, rewrite=rewrite)
 
-        async def ingest(source: Path) -> IngestResult:
+        async def ingest(source: str) -> IngestResult:
             """入库"""
-            if not source.is_file():
+            source_path = Path(source)
+            if not source_path.is_file():
                 raise FileNotFoundError("Demo only support one file in single injection")
 
-            if source.suffix.lower() != ".md":
+            if source_path.suffix.lower() != ".md":
                 raise ValueError("Demo only support ingest Markdown file")
 
             source_repo = "https://localtest/"
-            source_commit = blake2b(source.read_bytes(), digest_size=32).hexdigest()
-            return await rag_engine.ingest(source=source, source_repo=source_repo, source_commit=source_commit)
+            source_commit = blake2b(source_path.read_bytes(), digest_size=32).hexdigest()
+            return await rag_engine.ingest(source=source_path, source_repo=source_repo, source_commit=source_commit)
 
         async def rebuild_bm25() -> BM25BuildResult:
             return await rag_engine.rebuild_bm25()
