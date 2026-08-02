@@ -218,7 +218,10 @@ BM25 generation 和私有事件循环：
 ```python
 from rag_demo import RAG
 
-with RAG() as rag:
+rag = RAG()
+applied = rag.init_database()  # 新数据库执行 migration；重复调用返回空元组
+
+with rag:
     response = rag.search(
         "FastAPI 如何接收 JSON 请求体？",
         final_top_k=5,
@@ -242,9 +245,16 @@ FastAPI、异步 Agent 和已有事件循环使用 `AsyncRAG`：
 ```python
 from rag_demo import AsyncRAG
 
-async with AsyncRAG() as rag:
+rag = AsyncRAG()
+applied = await rag.init_database()
+
+async with rag:
     response = await rag.search("FastAPI 的依赖缓存如何工作？")
 ```
+
+`init_database()` 使用 `DATABASE_URL` 中的应用账号执行 migration。目标数据库必须先由
+PostgreSQL 管理员执行 `CREATE EXTENSION vector;`；普通数据库 OWNER 不能安装当前默认配置下的
+pgvector 扩展，但可以继续创建本项目的表和索引。
 
 `search()` 返回现有强类型 `SearchResponse`。同步门面需要观察 Query Rewrite 时使用：
 
@@ -255,7 +265,7 @@ with RAG() as rag:
     print(execution.response.results)
 ```
 
-SDK 还提供 `ingest()`、`rebuild_bm25()`、`reload_bm25()`、`doctor()` 和
+SDK 还提供 `init_database()`、`ingest()`、`rebuild_bm25()`、`reload_bm25()`、`doctor()` 和
 `compare_rewrite()`。同步 `RAG` 不能在已运行的事件循环中使用，此时应选择 `AsyncRAG`。不要为每次
 查询创建一个引擎；常驻进程应在启动时创建一次，在关闭时释放。
 

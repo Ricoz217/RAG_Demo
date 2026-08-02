@@ -21,3 +21,4 @@
 | 6 | [确定性 Query Rewrite 与效果对比](phase-06-deterministic-query-rewrite.md) | 已完成 |
 | 7 | [同步与异步 Python SDK](phase-07-python-sdk.md) | 已完成 |
 | 8 | [低可信检索结果提醒](phase-08-low-confidence-warning.md) | 已完成 |
+| 9 | [Python SDK 数据库初始化接口](phase-09-sdk-database-init.md) | 已完成 |

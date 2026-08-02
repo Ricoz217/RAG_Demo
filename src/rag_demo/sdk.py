@@ -13,6 +13,7 @@ from rag_demo.bm25_retriever import BM25BuildResult, BM25Retriever
 from rag_demo.config import Settings
 from rag_demo.dense_retriever import DenseSearchMode
 from rag_demo.ingest_service import DocumentIngestor, IngestResult
+from rag_demo.migrations import apply_migrations
 from rag_demo.query_rewriter import QueryRewriteExperiment, QuerySearchResponse
 from rag_demo.search_service import SearchRequest, SearchResponse
 
@@ -111,6 +112,10 @@ class AsyncRAG:
         traceback: TracebackType | None,
     ) -> None:
         await self.close()
+
+    async def init_database(self) -> tuple[str, ...]:
+        """Apply pending database migrations without opening application resources."""
+        return await apply_migrations(self.settings.database_url.get_secret_value())
 
     async def search(
         self,
@@ -324,6 +329,11 @@ class RAG:
         traceback: TracebackType | None,
     ) -> None:
         self.close()
+
+    def init_database(self) -> tuple[str, ...]:
+        """Synchronously apply pending database migrations."""
+        self._prepare_call(require_open=False)
+        return self._runner.run(self._async_rag.init_database())
 
     def search(
         self,

@@ -185,6 +185,29 @@ async def test_async_rag_requires_explicit_lifecycle() -> None:
         await rag.search("query")
 
 
+@pytest.mark.asyncio
+async def test_async_rag_initializes_database_before_opening_application(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = Settings()
+    application = FakeApplication(settings)
+    calls: list[str] = []
+
+    async def fake_apply_migrations(conninfo: str) -> tuple[str, ...]:
+        calls.append(conninfo)
+        return ("001_enable_vector", "002_create_tables")
+
+    monkeypatch.setattr("rag_demo.sdk.apply_migrations", fake_apply_migrations)
+    rag = AsyncRAG(settings, application=cast(Any, application))
+
+    applied = await rag.init_database()
+
+    assert applied == ("001_enable_vector", "002_create_tables")
+    assert calls == [settings.database_url.get_secret_value()]
+    assert application.open_count == 0
+    assert rag.is_open is False
+
+
 def test_sync_rag_reuses_one_event_loop_for_multiple_operations() -> None:
     settings = Settings()
     application = FakeApplication(settings)
@@ -201,6 +224,30 @@ def test_sync_rag_reuses_one_event_loop_for_multiple_operations() -> None:
     assert application.close_count == 1
     assert len(set(application.loop_ids)) == 1
     assert rag.is_open is False
+
+
+def test_sync_rag_initializes_database_without_opening_application(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = Settings()
+    application = FakeApplication(settings)
+    loop_ids: list[int] = []
+
+    async def fake_apply_migrations(conninfo: str) -> tuple[str, ...]:
+        assert conninfo == settings.database_url.get_secret_value()
+        loop_ids.append(id(asyncio.get_running_loop()))
+        return ()
+
+    monkeypatch.setattr("rag_demo.sdk.apply_migrations", fake_apply_migrations)
+    rag = RAG(settings, application=cast(Any, application))
+
+    applied = rag.init_database()
+    rag.open()
+    rag.close()
+
+    assert applied == ()
+    assert application.open_count == 1
+    assert loop_ids == [application.loop_ids[0]]
 
 
 @pytest.mark.asyncio

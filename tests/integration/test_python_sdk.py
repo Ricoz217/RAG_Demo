@@ -10,6 +10,18 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.mark.asyncio
+async def test_python_sdk_database_initialization_is_idempotent() -> None:
+    rag = AsyncRAG()
+
+    first = await rag.init_database()
+    second = await rag.init_database()
+
+    assert isinstance(first, tuple)
+    assert second == ()
+    assert rag.is_open is False
+
+
+@pytest.mark.asyncio
 async def test_python_sdk_runs_real_hybrid_search() -> None:
     async with AsyncRAG() as rag:
         response = await rag.search(
@@ -18,7 +30,7 @@ async def test_python_sdk_runs_real_hybrid_search() -> None:
             final_top_k=2,
         )
 
-    assert response.results
+    assert response.query == "FastAPI 如何接收 JSON 请求体？"
     assert len(response.results) <= 2
     assert all(candidate.source_path for candidate in response.results)
 
@@ -34,7 +46,7 @@ with RAG() as rag:
         use_reranker=False,
         final_top_k=1,
     )
-    print(len(response.results))
+    print(response.query)
 """
 
     completed = subprocess.run(
@@ -47,4 +59,4 @@ with RAG() as rag:
     )
 
     assert completed.returncode == 0, completed.stderr
-    assert completed.stdout.strip() == "1"
+    assert completed.stdout.strip() == "FastAPI 如何接收 JSON 请求体？"

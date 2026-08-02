@@ -1,3 +1,5 @@
+from urllib.parse import urlsplit
+
 import pytest
 from numpy import float32, ones
 
@@ -11,6 +13,7 @@ pytestmark = pytest.mark.integration
 @pytest.mark.asyncio
 async def test_migrations_are_idempotent_and_schema_is_ready() -> None:
     settings = Settings()
+    configured_dsn = urlsplit(settings.database_url.get_secret_value())
 
     await apply_migrations(settings.database_url.get_secret_value())
     reapplied = await apply_migrations(settings.database_url.get_secret_value())
@@ -20,8 +23,8 @@ async def test_migrations_are_idempotent_and_schema_is_ready() -> None:
     async with Database(settings.database_url.get_secret_value()) as database:
         status = await database.status()
 
-    assert status.current_user == "rag_app"
-    assert status.current_database == "rag_demo"
+    assert status.current_user == configured_dsn.username
+    assert status.current_database == configured_dsn.path.lstrip("/")
     assert status.vector_version == "0.8.5"
     assert status.embedding_dimensions == 1024
     assert status.hnsw_index_present is True
